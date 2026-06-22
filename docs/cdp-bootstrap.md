@@ -32,7 +32,7 @@ sudo chmod 700 /opt/xhs-worker/chrome-profile
 sudo -u xhsworker git clone <your-repo-url> /opt/xhs-worker/app
 cd /opt/xhs-worker/app
 npm install
-npm run build --workspaces --if-present
+npm run build
 ```
 
 把 `infra/worker.env.example` 复制为 `/opt/xhs-worker/worker.env`，填好 S3、Redis、告警 webhook 等值（见该文件内注释）。

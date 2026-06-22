@@ -26,3 +26,12 @@ export interface HealthStatus {
   lastChecked: string;
   detail?: string;
 }
+
+export type JobStage = "extracting" | "downloading" | "converting" | "uploading";
+
+export interface JobProgress {
+  percent: number;
+  stage: JobStage;
+  current?: number;
+  total?: number;
+}

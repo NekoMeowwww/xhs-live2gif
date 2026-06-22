@@ -42,7 +42,7 @@ bash scripts/xhs-live2gif.sh "<小红书笔记链接或短链>"
 
 ```bash
 npm install
-npm run build --workspaces --if-present
+npm run build
 
 # 三个进程分开起：
 redis-server

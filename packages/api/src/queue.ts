@@ -1,6 +1,6 @@
 import { Queue, Job } from "bullmq";
 import IORedis from "ioredis";
-import { JobPayload, JobResult } from "@xhs/shared";
+import { JobPayload, JobResult, JobProgress } from "@xhs/shared";
 
 const REDIS_URL = process.env.XHS_REDIS_URL ?? "redis://127.0.0.1:6379";
 
@@ -19,7 +19,7 @@ export async function enqueueJob(payload: JobPayload): Promise<void> {
 }
 
 export type JobStatusResponse =
-  | { status: "queued" | "processing" }
+  | { status: "queued" | "processing"; progress?: JobProgress }
   | { status: "done" | "failed"; result: JobResult };
 
 export async function getJobStatus(jobId: string): Promise<JobStatusResponse | null> {
@@ -37,8 +37,16 @@ export async function getJobStatus(jobId: string): Promise<JobStatusResponse | n
       result: { status: "failed", error: job.failedReason ?? "unknown error" },
     };
   }
+  // job.progress is whatever was last passed to job.updateProgress() in the
+  // worker (see packages/worker/src/index.ts) — absent until the pipeline's
+  // first onProgress call lands, hence the JobProgress-shape check.
+  const progress = isJobProgress(job.progress) ? job.progress : undefined;
   if (state === "active") {
-    return { status: "processing" };
+    return { status: "processing", progress };
   }
-  return { status: "queued" };
+  return { status: "queued", progress };
+}
+
+function isJobProgress(value: unknown): value is JobProgress {
+  return typeof value === "object" && value !== null && "percent" in value && "stage" in value;
 }

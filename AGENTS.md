@@ -59,10 +59,10 @@ sudo chmod 700 /opt/xhs-worker/chrome-profile
 sudo -u xhsworker git clone https://github.com/NekoMeowwww/xhs-live2gif.git /opt/xhs-worker/app
 cd /opt/xhs-worker/app
 npm install
-npm run build --workspaces --if-present
+npm run build
 ```
 
-**判定**：三个 `npm run build` 都以 exit code 0 结束，`packages/{shared,worker,api}/dist/` 都生成了文件。
+**判定**：`npm run build` 以 exit code 0 结束（内部按 shared → worker → api 顺序串行编译，顺序写死在根 `package.json` 的 build script 里，不要改成 `--workspaces` 通配，那样顺序不保证，会因为 api 先于 shared 编译而报类型错误），`packages/{shared,worker,api}/dist/` 都生成了文件。
 
 把 `infra/worker.env.example` 复制成 `/opt/xhs-worker/worker.env`，填好 S3/Redis/webhook 的值（这些值人类应该已经在前置条件清单里给你了；如果没给，停下来问）。
 

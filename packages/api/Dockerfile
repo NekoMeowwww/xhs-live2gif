@@ -8,7 +8,7 @@ COPY packages/shared ./packages/shared
 COPY packages/api ./packages/api
 
 RUN npm install
-RUN npm run build --workspaces --if-present
+RUN npm run build
 
 WORKDIR /repo/packages/api
 EXPOSE 3000

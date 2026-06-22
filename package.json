@@ -4,6 +4,9 @@
   "workspaces": [
     "packages/*"
   ],
+  "scripts": {
+    "build": "npm run build -w @xhs/shared && npm run build -w @xhs/worker && npm run build -w @xhs/api"
+  },
   "engines": {
     "node": ">=20"
   }

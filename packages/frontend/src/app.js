@@ -8,6 +8,9 @@ const form = document.getElementById("job-form");
 const input = document.getElementById("url-input");
 const submitBtn = document.getElementById("submit-btn");
 const statusLine = document.getElementById("status-line");
+const progressWrap = document.getElementById("progress-wrap");
+const progressBar = document.getElementById("progress-bar");
+const progressLabel = document.getElementById("progress-label");
 const resultSection = document.getElementById("result");
 const resultMessage = document.getElementById("result-message");
 const zipLink = document.getElementById("zip-link");
@@ -31,11 +34,37 @@ function setStatus(text, isError = false) {
   statusLine.classList.toggle("error", isError);
 }
 
+const STAGE_LABELS = {
+  extracting: "解析链接",
+  downloading: "下载实况视频",
+  converting: "转换 GIF",
+  uploading: "上传结果",
+};
+
+function setProgress(progress) {
+  if (!progress) {
+    progressWrap.hidden = true;
+    return;
+  }
+  progressWrap.hidden = false;
+  progressBar.value = progress.percent ?? 0;
+  const stageText = STAGE_LABELS[progress.stage] ?? progress.stage ?? "";
+  const countText = progress.total ? ` (${progress.current ?? 0}/${progress.total})` : "";
+  progressLabel.textContent = `${stageText}${countText} ${Math.round(progress.percent ?? 0)}%`;
+}
+
+function hideProgress() {
+  progressWrap.hidden = true;
+  progressBar.value = 0;
+  progressLabel.textContent = "";
+}
+
 function resetResult() {
   resultSection.hidden = true;
   resultMessage.textContent = "";
   zipLink.hidden = true;
   gifGrid.innerHTML = "";
+  hideProgress();
 }
 
 function renderResult(result) {
@@ -82,13 +111,17 @@ async function pollJob(jobId) {
 
     if (data.status === "queued") {
       setStatus("排队中...");
+      setProgress(data.progress);
     } else if (data.status === "processing") {
-      setStatus("正在提取并转换中...");
+      setStatus("");
+      setProgress(data.progress ?? { percent: 0, stage: "extracting" });
     } else if (data.status === "done") {
       setStatus("");
+      hideProgress();
       renderResult(data.result);
       return;
     } else if (data.status === "failed") {
+      hideProgress();
       setStatus(`处理失败：${data.result?.error ?? "未知错误"}`, true);
       return;
     }
@@ -96,6 +129,7 @@ async function pollJob(jobId) {
     await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
   }
 
+  hideProgress();
   setStatus("处理超时，请稍后重试。", true);
 }
 

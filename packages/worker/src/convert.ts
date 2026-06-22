@@ -25,13 +25,18 @@ async function convertToGif(mp4Path: string, gifPath: string): Promise<void> {
   );
 }
 
-export async function convertAll(mp4Paths: string[], gifDir: string): Promise<string[]> {
+export async function convertAll(
+  mp4Paths: string[],
+  gifDir: string,
+  onProgress?: (done: number, total: number) => void,
+): Promise<string[]> {
   const gifPaths: string[] = [];
-  for (const mp4Path of mp4Paths) {
-    const name = path.basename(mp4Path, ".mp4");
+  for (let i = 0; i < mp4Paths.length; i++) {
+    const name = path.basename(mp4Paths[i], ".mp4");
     const gifPath = path.join(gifDir, `${name}.gif`);
-    await convertToGif(mp4Path, gifPath);
+    await convertToGif(mp4Paths[i], gifPath);
     gifPaths.push(gifPath);
+    onProgress?.(i + 1, mp4Paths.length);
   }
   return gifPaths;
 }
