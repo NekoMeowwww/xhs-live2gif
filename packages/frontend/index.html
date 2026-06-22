@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>小红书实况图转 GIF</title>
+  <link rel="stylesheet" href="src/style.css" />
+</head>
+<body>
+  <main>
+    <h1>小红书实况图 → GIF</h1>
+    <p class="subtitle">粘贴小红书笔记链接，自动提取实况图片并转换成 GIF。</p>
+
+    <form id="job-form">
+      <input
+        id="url-input"
+        type="text"
+        placeholder="https://www.xiaohongshu.com/explore/... 或 http://xhslink.com/..."
+        autocomplete="off"
+        required
+      />
+      <button id="submit-btn" type="submit">开始转换</button>
+    </form>
+
+    <p id="status-line" class="status" hidden></p>
+
+    <section id="result" hidden>
+      <p id="result-message"></p>
+      <a id="zip-link" class="zip-link" hidden download>下载全部 (.zip)</a>
+      <div id="gif-grid" class="gif-grid"></div>
+    </section>
+  </main>
+
+  <script src="src/app.js"></script>
+</body>
+</html>

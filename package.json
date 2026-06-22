@@ -1,0 +1,10 @@
+{
+  "name": "xhs-live2gif-service",
+  "private": true,
+  "workspaces": [
+    "packages/*"
+  ],
+  "engines": {
+    "node": ">=20"
+  }
+}

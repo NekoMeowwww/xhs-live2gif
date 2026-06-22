@@ -1,0 +1,16 @@
+[Unit]
+Description=XHS live-photo-to-gif Node worker (BullMQ consumer, Tier A)
+After=xhs-chrome.service
+Requires=xhs-chrome.service
+
+[Service]
+User=xhsworker
+Environment=OPENCLI_CDP_ENDPOINT=http://localhost:9222
+EnvironmentFile=/opt/xhs-worker/worker.env
+WorkingDirectory=/opt/xhs-worker/app/packages/worker
+ExecStart=/usr/bin/node dist/index.js
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
