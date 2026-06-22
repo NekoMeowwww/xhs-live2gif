@@ -13,6 +13,18 @@ const resultMessage = document.getElementById("result-message");
 const zipLink = document.getElementById("zip-link");
 const gifGrid = document.getElementById("gif-grid");
 
+// Xiaohongshu's app "copy link" share action produces text like:
+// "敲代码的可爱小熊 http://xhslink.com/o/2WwdoTSaEth 存下链接，去【小红书】阅读全文~"
+// — pull just the URL out so users can paste that whole blob directly
+// instead of having to manually trim it themselves.
+function extractXhsUrl(text) {
+  const match = text.match(/https?:\/\/(?:www\.)?(?:xiaohongshu\.com|xhslink\.com)\/\S+/i);
+  if (!match) return null;
+  // Defensive trim in case share text ever omits the trailing space and a
+  // punctuation mark gets swallowed into the \S+ match.
+  return match[0].replace(/[，,。.!！?？、)\]）】]+$/, "");
+}
+
 function setStatus(text, isError = false) {
   statusLine.textContent = text;
   statusLine.hidden = !text;
@@ -89,8 +101,15 @@ async function pollJob(jobId) {
 
 form.addEventListener("submit", async (event) => {
   event.preventDefault();
-  const url = input.value.trim();
-  if (!url) return;
+  const raw = input.value.trim();
+  if (!raw) return;
+
+  const url = extractXhsUrl(raw);
+  if (!url) {
+    resetResult();
+    setStatus("没有在粘贴内容里识别到小红书链接，请确认包含完整的 xiaohongshu.com 或 xhslink.com 链接。", true);
+    return;
+  }
 
   submitBtn.disabled = true;
   resetResult();
