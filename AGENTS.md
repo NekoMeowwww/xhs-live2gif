@@ -9,7 +9,7 @@
 1. **不要把 worker 并发数从 1 调高。** 单账号背后只有一个 Chrome session，这不是性能瓶颈，是反爬底线（见 `packages/worker/src/index.ts` 里的注释）。要加吞吐量，是复制一整套"账号+Chrome+worker"，不是改这个数字。
 2. **`/opt/xhs-worker/chrome-profile/` 和任何 cookie JSON 文件等同账号凭证。** 不要 `cat`/打印它们的内容到日志或回复里，不要把它们提交进 git，迁移完成后立刻删除临时 cookie 文件（`docs/cdp-bootstrap.md` 第 4 步已经写了，照做）。
 3. **不要往公网暴露 Redis（6379）。** Tier A 的 worker 连 Tier B 的 Redis 必须走防火墙/安全组限制到 Tier A 的 IP，不要为了"先跑起来"临时全开。
-4. **改限流数值（`packages/api/src/index.ts` 里的 `max: 3, timeWindow: "10 minutes"`）需要人类批准。** 这是账号风险和滥用风险之间的平衡，不是纯技术参数，调之前先汇报现状（账号健康检查历史、实际请求量）再问。
+4. **改限流数值（`packages/api/src/index.ts` 里的 `max: 1, timeWindow: "1 minute"`）需要人类批准。** 这是账号风险和滥用风险之间的平衡，不是纯技术参数，调之前先汇报现状（账号健康检查历史、实际请求量）再问。
 5. **遇到登录墙/验证码/短信验证，停下来找人类处理，不要自己猜着点。** 自动化"处理验证码"这件事本身就是风控最想抓的行为模式。
 6. **任何 `git push --force`、删除 Chrome profile、重置 S3 bucket 之类不可逆操作，执行前必须先汇报打算做什么并等待确认。**
 7. **不要修改 `packages/worker/src/extract.ts` 里的提取 JS 或 `convert.ts` 里的 ffmpeg 滤镜图**，除非先用已知笔记（见下方"已知良好笔记"）验证过修改后的版本仍然能跑出一致结果。这段逻辑已经端到端验证过，不要凭直觉"优化"它。
@@ -160,9 +160,9 @@ curl -s -o /dev/null -w '%{http_code}\n' -X POST http://localhost/api/jobs \
   -H 'Content-Type: application/json' -d '{"url":"https://example.com"}'
 # 判定：400
 
-for i in 1 2 3 4; do curl -s -o /dev/null -w '%{http_code}\n' -X POST http://localhost/api/jobs \
+for i in 1 2; do curl -s -o /dev/null -w '%{http_code}\n' -X POST http://localhost/api/jobs \
   -H 'Content-Type: application/json' -d '{"url":"http://xhslink.com/o/2E5XOr9DlHP"}'; done
-# 判定：前三个 202，第四个 429
+# 判定：第一个 202，第二个（1 分钟内）429
 ```
 
 ### 阶段 9：健康检查 + 告警链路

@@ -17,8 +17,8 @@ async function main(): Promise<void> {
   // (plan section 3). Tune up only once worker/account health data (see
   // GET /api/health) shows headroom — not before.
   await app.register(rateLimit, {
-    max: 3,
-    timeWindow: "10 minutes",
+    max: 1,
+    timeWindow: "1 minute",
     redis: connection,
   });
 
