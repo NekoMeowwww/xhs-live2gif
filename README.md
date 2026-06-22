@@ -17,7 +17,7 @@ scripts/xhs-live2gif.sh   单文件 CLI 版本，本地手动用/应急调试用
 packages/
   shared/                 共享类型 + URL 白名单校验（整个系统的 SSRF/滥用边界）
   worker/                 提取→下载→转码→上传的流水线，BullMQ 消费者，session 健康检查
-    bootstrap/            一次性脚本：把 Windows 上已登录的 Chrome cookie 迁移到 Linux
+    bootstrap/            一次性脚本：把手动导出的 cookie 注入 Linux Chrome profile（导出本身是人工步骤，见 docs/cdp-bootstrap.md）
   api/                    Fastify API：提交任务 / 查询进度 / 健康检查
   frontend/                静态页面：粘贴链接 → 轮询 → 展示并下载 GIF
 infra/                    systemd unit（浏览器 worker 那台机器）+ docker-compose（API/前端那台机器）

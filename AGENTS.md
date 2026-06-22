@@ -80,25 +80,22 @@ curl http://localhost:9222/json/version
 
 **先不要装 `xhs-worker.service`**——这台 Chrome 的 profile 是空的，没有登录态，worker 跑起来也只会不断失败。下一步必须先建立登录态。
 
-### 阶段 4：迁移登录态 ——这一步大量依赖人类，照 `docs/cdp-bootstrap.md` 第 4 步执行
+### 阶段 4：迁移登录态 ——cookie 导出必须由人类手动做，照 `docs/cdp-bootstrap.md` 第 4 步执行
 
-1. 让人类确认：开发机上所有常规 Chrome 窗口已经关闭。
-2. 在开发机上跑：
-   ```bash
-   cd packages/worker && npm install
-   node bootstrap/cookie-export.js "<chrome-profile-dir>" xhs-cookies.json
-   ```
-3. `scp` 这个文件到云服务器。
-4. 在云服务器上跑：
+**不要尝试写脚本自动导出 Windows Chrome 的 cookie。** 已经验证过：Chrome 127+ 的 App-Bound Encryption 会让"复制 profile 再用 CDP 读 cookie"这种自动化手法读出空结果——这个限制是 Chrome 故意加的，专门用来防止 cookie 窃取，不要去找办法绕过去。
+
+1. 让人类用 Cookie-Editor 之类的扩展，在已登录小红书的 Chrome 上手动导出 cookie 为 JSON（`docs/cdp-bootstrap.md` 第 4 步有具体操作）。这一步只能人类做，你不要代劳。
+2. 拿到人类给你的 `xhs-cookies.json` 后，`scp` 到云服务器。
+3. 在云服务器上跑：
    ```bash
    sudo -u xhsworker node /opt/xhs-worker/app/packages/worker/bootstrap/cookie-import.js xhs-cookies.json
    ```
-5. 验证：
+4. 验证：
    ```bash
    OPENCLI_CDP_ENDPOINT=http://localhost:9222 opencli browser verify-session eval "window.__INITIAL_STATE__.user"
    ```
    **判定**：返回的是这个新账号的用户信息对象，不是 `undefined`、不是登录墙的 HTML 痕迹。
-6. **判定通过后立刻**：`rm` 掉两台机器上的 `xhs-cookies.json`。这一步不可跳过，不要留着"以防万一"。
+5. **判定通过后立刻**：`rm` 掉两台机器上的 `xhs-cookies.json`。这一步不可跳过，不要留着"以防万一"。
 
 **如果这一步反复失败**（页面始终是登录墙/验证码）：停下，按 `docs/runbook-relogin.md` 的 Plan B 走——临时起 VNC，**让人类**手动登录。不要自己尝试填验证码、猜短信验证码、或者重试很多次指望它过去（重试本身就是会被风控盯上的行为）。
 

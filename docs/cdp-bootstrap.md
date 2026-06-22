@@ -47,19 +47,19 @@ sudo systemctl enable --now xhs-xvfb xhs-chrome
 
 **先只启动 Xvfb 和 Chrome，不要急着启动 worker** —— 这台 Chrome 的 profile 还是空的，没有登录态，得先做第 4 步。
 
-## 4. 把 Windows 上已登录的会话迁移过来
+## 4. 把已登录的会话迁移过来
 
-在 **Windows 开发机**上：
+**这一步的 cookie 导出必须手动做，不能用脚本自动导出。** 早期方案设想过写一个脚本直接读 Windows Chrome 的 cookie 数据库，实测行不通：Chrome 127+ 加了 App-Bound Encryption，专门用来防止"复制 profile + 自动化读 cookie"这种手法（这正是 cookie 窃取木马的标准操作），脚本读出来的 cookie 全是空的。继续找办法绕过去就是在研究怎么绕开 Chrome 的反窃取保护，不做。
 
-1. 关掉所有正在跑的常规 Chrome 窗口（Chrome 不允许同一个 profile 目录被两个实例同时打开）。
-2. 跑导出脚本：
-   ```bash
-   cd D:/SelfDesign/xhs/packages/worker
-   npm install
-   node bootstrap/cookie-export.js "C:\Users\<你>\AppData\Local\Google\Chrome\User Data" xhs-cookies.json
-   ```
-   这会临时拉起一个带调试端口的 Chrome，读出 `.xiaohongshu.com` 域下的全部 cookie（包括 HttpOnly 的，`document.cookie` 读不到），写到 `xhs-cookies.json`，然后自动关掉这个临时 Chrome。
-3. 把 `xhs-cookies.json` scp 到 Linux 服务器：
+正规路径是用浏览器扩展手动导出——扩展走的是 Chrome 官方开放给扩展的 `chrome.cookies` API，不受 App-Bound Encryption 限制：
+
+在 **已经登录小红书的 Chrome**（不需要是开发机，任何一台正常浏览器都行）上：
+
+1. 装 [Cookie-Editor](https://chromewebstore.google.com/detail/cookie-editor/hlkenndednhfkekhgcdicdfddnkalmdm) 扩展。
+2. 打开 `https://www.xiaohongshu.com` 并确认已登录。
+3. 点扩展图标 → 应该能看到当前站点的全部 cookie（包含 HttpOnly 的）。
+4. 点 **Export** → 选 **JSON** 格式 → 复制到剪贴板或直接下载，存成 `xhs-cookies.json`。
+5. 把 `xhs-cookies.json` scp 到 Linux 服务器：
    ```bash
    scp xhs-cookies.json xhsworker@<linux-host>:/opt/xhs-worker/app/packages/worker/
    ```
