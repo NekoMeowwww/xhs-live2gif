@@ -1,0 +1,34 @@
+# For Tier A hosts whose glibc is too old to run modern Chrome/Node directly
+# (e.g. CentOS 7.9 ships glibc 2.17; Chrome 110+ needs glibc >= 2.28 and
+# Node 18+'s official binaries also need newer than 2.17). Bundling Xvfb +
+# Chrome + the worker into this Debian-based image means none of that touches
+# the host's own libraries at all — see AGENTS.md "CentOS 7 等旧 glibc 主机：
+# 容器化 Tier A". Hosts with a modern enough glibc (Ubuntu/Debian, recent
+# RHEL/CentOS) should use the plain systemd deployment in docs/cdp-bootstrap.md
+# instead — this image exists specifically to route around a glibc floor,
+# not as the default way to run Tier A.
+FROM node:20-bookworm-slim
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    xvfb ffmpeg curl gnupg ca-certificates \
+    fonts-liberation libnss3 libxss1 libasound2 \
+  && curl -fsSL https://dl.google.com/linux/linux_signing_key.pub | gpg --dearmor -o /usr/share/keyrings/google-chrome.gpg \
+  && echo "deb [arch=amd64 signed-by=/usr/share/keyrings/google-chrome.gpg] http://dl.google.com/linux/chrome/deb/ stable main" > /etc/apt/sources.list.d/google-chrome.list \
+  && apt-get update && apt-get install -y --no-install-recommends google-chrome-stable \
+  && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /repo
+# Workspace-aware install: copy only the manifests + shared/worker source so
+# Docker layer caching survives unrelated changes to api/frontend (same
+# pattern as packages/api/Dockerfile).
+COPY package.json tsconfig.base.json ./
+COPY packages/shared ./packages/shared
+COPY packages/worker ./packages/worker
+RUN npm install
+RUN npm run build -w @xhs/shared && npm run build -w @xhs/worker
+
+WORKDIR /repo/packages/worker
+RUN chmod +x docker-entrypoint.sh
+
+ENV DISPLAY=:99
+ENTRYPOINT ["./docker-entrypoint.sh"]

@@ -18,9 +18,10 @@ packages/
   shared/                 共享类型 + URL 白名单校验（整个系统的 SSRF/滥用边界）
   worker/                 提取→下载→转码→上传的流水线，BullMQ 消费者，session 健康检查
     bootstrap/            一次性脚本：把手动导出的 cookie 注入 Linux Chrome profile（导出本身是人工步骤，见 docs/cdp-bootstrap.md）
+    Dockerfile.tierA      给 glibc 太老的主机（如 CentOS 7.x）用：Xvfb+Chrome+worker 打进一个容器
   api/                    Fastify API：提交任务 / 查询进度 / 健康检查
   frontend/                静态页面：粘贴链接 → 轮询 → 展示并下载 GIF
-infra/                    systemd unit（浏览器 worker 那台机器）+ docker-compose（API/前端那台机器）
+infra/                    systemd unit（浏览器 worker 那台机器，常规路径）+ docker-compose（API/前端那台机器，以及 glibc 太老时浏览器 worker 那台机器的容器化路径）
 docs/
   cdp-bootstrap.md        从零搭建 Linux 浏览器 worker 的完整步骤
   runbook-relogin.md       登录态失效/触发验证码时的处理流程
@@ -75,6 +76,8 @@ worker 和 API 需要的环境变量分别见 [`infra/worker.env.example`](infra
 - **Tier B（无状态）**：API + 前端 + Redis，用 `infra/docker-compose.api.yml` 起，可以随时重建/扩容，永远碰不到 Chrome 的登录态。
 
 两层只通过 Redis 队列通信。**扩容是加更多"账号+Chrome+worker"实例**，都消费同一个 BullMQ 队列。推荐每个实例用**独立服务器**（同台机器上的多账号共享同一个出口 IP，容易被风控关联到一起）——新机器直接照搬 `docs/cdp-bootstrap.md` 全套流程，端口用默认的 19222 即可，只需指向同一个 Tier B Redis；只有临时凑合才用同一台机器加端口（`xhs-chrome@19223`/`xhs-worker@19223`）。具体步骤见 [`AGENTS.md`](AGENTS.md)。
+
+如果某台目标机器的 glibc 太老装不动现代 Chrome/Node（典型如 CentOS 7.x，glibc 锁在 2.17，而 Chrome 110+/Node 18+ 都要求更新的版本），用 `infra/docker-compose.tierA.yml` 把 Xvfb+Chrome+worker 一起打进一个 Debian 基础镜像跑——同样在 `AGENTS.md` 里有完整步骤。
 
 ## 安全 / 风险
 

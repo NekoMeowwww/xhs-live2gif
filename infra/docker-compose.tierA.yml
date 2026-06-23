@@ -1,0 +1,26 @@
+# Tier A on a host whose glibc is too old for Chrome/Node directly (e.g.
+# CentOS 7.9 / glibc 2.17) — see AGENTS.md "CentOS 7 等旧 glibc 主机：容器化
+# Tier A". On a host with a modern enough glibc, use the plain systemd
+# deployment (docs/cdp-bootstrap.md, infra/systemd/xhs-chrome@.service +
+# xhs-worker@.service) instead — that one is simpler and is what AGENTS.md's
+# main deployment sequence assumes.
+#
+# Xvfb + Chrome + the worker process all run inside the one `worker`
+# container (see packages/worker/docker-entrypoint.sh) — Chrome's CDP port
+# is never published to the host, only reachable over the container's own
+# loopback, matching the bare-metal deployment's 127.0.0.1-only binding.
+services:
+  worker:
+    build:
+      context: ..
+      dockerfile: packages/worker/Dockerfile.tierA
+    restart: unless-stopped
+    shm_size: "1gb"
+    env_file: ./worker.env
+    environment:
+      - XHS_INSTANCE_ID=${XHS_INSTANCE_ID:-default}
+    volumes:
+      # Same credential-grade directory as the bare-metal deployment — back
+      # it up the same way (AGENTS.md 阶段 6), just stop this container
+      # instead of `systemctl stop xhs-chrome@<port>` first.
+      - ${XHS_CHROME_PROFILE_DIR:-./tierA-chrome-profile}:/data/chrome-profile

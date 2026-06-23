@@ -8,7 +8,9 @@
 
 所以 `packages/worker` 不再依赖 `opencli` CLI 本身——`packages/worker/src/cdp.ts` 直接用 `chrome-remote-interface` 连 Chrome 的 CDP 端口（和 `cookie-import.js` 一直用的方式一样）。**Tier A 服务器不需要装 `opencli`。** `opencli` 只在桌面端（装了扩展、真人登录的 Chrome，比如 `scripts/xhs-live2gif.sh` 这个手动调试脚本）才有用。
 
-这份文档走的是第一个实例（端口 19222）。要再加一个账号实例（横向扩容并发吞吐，而不是调高 worker 的 `concurrency`），照这份文档把端口换成新数字重新走一遍即可——具体清单见 `AGENTS.md` 的"横向扩容：新增一个账号实例"一节。
+这份文档走的是第一个实例（端口 19222），假设目标机器的 glibc 够新（Ubuntu/Debian，或够新的 RHEL 系）。**如果是 CentOS 7.x 之类 glibc 锁在 2.17 的老系统**（`ldd --version` 看一下），Chrome 110+/Node 18+ 都装不上，这份文档的 `apt-get` 流程也走不通——改用容器化的版本，见 `AGENTS.md` 的"CentOS 7 等旧 glibc 主机：容器化 Tier A"一节。
+
+要再加一个账号实例（横向扩容并发吞吐，而不是调高 worker 的 `concurrency`），照这份文档把端口换成新数字重新走一遍即可——具体清单见 `AGENTS.md` 的"横向扩容：新增一个账号实例"一节。
 
 ## 0. 前置
 

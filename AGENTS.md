@@ -16,6 +16,7 @@
 8. **worker 不依赖 `opencli` CLI，也不需要在 Tier A 服务器上装它。** 已经源码级确认：opencli 1.8.4 的 `browser` 子命令不支持 `OPENCLI_CDP_ENDPOINT`，强制走浏览器扩展桥接，而扩展在无 GUI 的 Linux 服务器上装不上。`packages/worker/src/cdp.ts` 直连 Chrome 的 CDP 端口（`chrome-remote-interface`），不经过 opencli。**如果你在 Tier A 上遇到任何"扩展未连接/disconnected"之类的报错，不要去修扩展——那是在解决一个我们已经绕开的问题，先检查 `XHS_CDP_ENDPOINT` 是不是指向了正确的端口、Chrome 是不是真的监听在那个端口上。**
 9. **Chrome 的调试端口第一个实例固定用 19222，不要改回 9222。** 9222 是 Puppeteer/Playwright 等工具的通用默认端口，共享服务器上极易撞车（实际发生过：一个无关的、root 启动的 Playwright Chrome 占着 9222，导致我们自己的 `xhs-chrome` 被挤到 IPv6 地址上，引发一堆诡异的连接问题）。起任何 `xhs-chrome@<port>.service` 前先用 `ss -ltnp | grep <port>` 确认端口没被占用。
 10. **新增账号实例（横向扩容）必须走下方"横向扩容"那一节的步骤，不要现场临时拍一个端口号就上。** 端口号同时是 systemd 模板单元的实例参数（`xhs-chrome@<port>`/`xhs-worker@<port>`）、profile 目录名、`XHS_INSTANCE_ID`——三处必须一致，错位的后果是两个账号的健康检查互相覆盖却看不出报错。
+11. **容器化部署（`docker-compose.tierA.yml`，专给 CentOS 7 等旧 glibc 主机用）：不要把 CDP 端口（19222）映射到宿主机端口。** Chrome 只通过容器自己的 loopback 给同容器里的 worker 用，这等价于裸机版本"绑定 127.0.0.1"的安全性质——加一条 `ports: ["19222:19222"]` 就把它捅到宿主机网络上了，没必要也不要这么做。这条路径里 Chrome 必须 `--no-sandbox`（容器内以 root 跑 Chrome 本身不支持沙箱），这是已知且接受的取舍（见 `packages/worker/docker-entrypoint.sh` 里的注释），不要"优化掉"它导致 Chrome 起不来。
 
 ## 已知良好笔记（到处都会用到，记住它）
 
@@ -31,7 +32,7 @@ noteId: 6a349af8000000000702c166
 
 执行任何部署步骤前，先确认这些都已具备，缺哪个就停下来问人类要：
 
-- [ ] 一台 Linux 云服务器的 SSH 访问权限
+- [ ] 一台 Linux 云服务器的 SSH 访问权限——先跑一下 `ldd --version | head -1` 确认 glibc 版本，**低于 2.28（典型如 CentOS 7.x 的 2.17）就走文末"CentOS 7 等旧 glibc 主机：容器化 Tier A"那一节，不要硬装阶段 1 的 Chrome**
 - [ ] 一个**专门为这个服务新建**的小红书账号（不是人类的主账号）——见硬性规则 5 和 `docs/runbook-relogin.md`
 - [ ] 这台 Windows 开发机（或任意一台已经登录该账号的 Chrome）的访问权限，用于导出登录态
 - [ ] S3 兼容对象存储的 endpoint / bucket / access key / secret key
@@ -225,6 +226,90 @@ curl -s http://localhost/api/health
 7. 备份这个新实例的 profile（阶段 6 的步骤，换成新端口）。
 
 完成后向人类汇报：用的是 A 还是 B 路径、新实例的标识（独立服务器就是机器名/IP，同机就是端口号）、阶段 5/健康检查的验证结果、现在总共有几个实例在跑。
+
+## CentOS 7 等旧 glibc 主机：容器化 Tier A
+
+阶段 1-6 假设的是能装现代 Chrome/Node 的系统（Ubuntu/Debian，或够新的 RHEL 系）。如果目标机器是 **CentOS 7.9 这类 glibc 锁定在 2.17 的系统**：Chrome 110+ 要求 glibc ≥ 2.28，Node.js 18+ 官方预编译二进制同样要求比 2.17 新的 glibc——两个都装不上，且阶段 1-6 里的 `apt-get` 命令本身在 `yum`/`dnf` 环境下也不能直接用。**先确认这台机器确实没法换成 Ubuntu/Debian（见上面"横向扩容"A 路径），换不了才走这一节**——容器化引入了原本（`README.md`/方案）刻意避免的复杂度，只为绕开这一个具体的 glibc 硬约束，不是更优的默认方案。
+
+Xvfb + Chrome + worker 三个进程打包进同一个 Debian 基础镜像（`packages/worker/Dockerfile.tierA`），容器自带 glibc 2.36+，跟宿主机的 2.17 完全无关；CDP 端口只在容器内部 loopback 上监听，**不映射到宿主机**，安全性质和裸机版本的 `127.0.0.1` 绑定等价。
+
+1. **装 Docker**（CentOS 7 上官方支持，常见组合）：
+   ```bash
+   sudo yum install -y yum-utils
+   sudo yum-config-manager --add-repo https://download.docker.com/linux/centos/docker-ce.repo
+   sudo yum install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin
+   sudo systemctl enable --now docker
+   ```
+   **判定**：`docker --version` 和 `docker compose version` 都有正常输出。
+
+2. **建持久化目录**（等价于裸机方案的 `chrome-profile`，登录态会落在这里——同等账号凭证级别，硬性规则 2 照样适用）：
+   ```bash
+   sudo mkdir -p /opt/xhs-worker/instances/19222/chrome-profile
+   sudo chmod 700 /opt/xhs-worker/instances/19222/chrome-profile
+   ```
+
+3. **拉代码、填配置、build 镜像**：
+   ```bash
+   git clone https://github.com/NekoMeowwww/xhs-live2gif.git /opt/xhs-worker/app
+   cd /opt/xhs-worker/app/infra
+   cp worker.env.example worker.env   # 跟裸机版本完全一样：填 S3/Redis/webhook
+   echo "XHS_CHROME_PROFILE_DIR=/opt/xhs-worker/instances/19222/chrome-profile" >> .env
+   docker compose -f docker-compose.tierA.yml build
+   ```
+   **判定**：`docker compose build` 以 exit code 0 结束。
+
+4. **起容器**（先不对外开放 Tier B，这台 Chrome 的 profile 还是空的）：
+   ```bash
+   docker compose -f docker-compose.tierA.yml up -d
+   docker compose -f docker-compose.tierA.yml logs --tail=50 worker
+   ```
+   **判定**：`docker compose ps` 里 `worker` 是 `Up`，日志里能看到 worker 打印 `listening on shared queue`，没有反复重启。
+
+5. **验证 CDP**（容器内部执行，因为端口没有映射出来）：
+   ```bash
+   docker compose -f docker-compose.tierA.yml exec worker curl -sf http://127.0.0.1:19222/json/version
+   ```
+   **判定**：同阶段 3——JSON 里 `Browser` 字段是 `Chrome/...`。
+
+6. **迁移登录态**（人类手动导出 cookie 这一步完全不变，照 `docs/cdp-bootstrap.md` 第 4 步执行；下面只是把命令换成容器版）：
+   ```bash
+   docker compose -f docker-compose.tierA.yml cp xhs-cookies.json worker:/repo/packages/worker/xhs-cookies.json
+   docker compose -f docker-compose.tierA.yml exec worker node bootstrap/cookie-import.js xhs-cookies.json
+   docker compose -f docker-compose.tierA.yml exec worker rm xhs-cookies.json
+   rm xhs-cookies.json
+   ```
+   **判定**：同阶段 4——输出 `has-user-state`。判定通过后立刻删两边的 cookie 文件（上面已经包含这一步，不要漏）。
+
+7. **端到端验证**（同阶段 5 的 node 脚本，换成在容器里跑）：
+   ```bash
+   docker compose -f docker-compose.tierA.yml exec worker node -e "
+   const { extractLivePhotos } = require('./dist/extract');
+   const { downloadVideos } = require('./dist/download');
+   const { convertAll } = require('./dist/convert');
+   const fs = require('fs');
+   const path = require('path');
+   const tmp = '/tmp/xhs-agent-verify';
+   fs.mkdirSync(path.join(tmp, 'mp4'), { recursive: true });
+   fs.mkdirSync(path.join(tmp, 'gif'), { recursive: true });
+   (async () => {
+     const { noteId, videoUrls } = await extractLivePhotos('http://xhslink.com/o/2E5XOr9DlHP');
+     console.log('noteId:', noteId, 'count:', videoUrls.length);
+     const mp4s = await downloadVideos(videoUrls, path.join(tmp, 'mp4'));
+     const gifs = await convertAll(mp4s, path.join(tmp, 'gif'));
+     console.log('gifs ok:', gifs.length);
+   })().catch((e) => { console.error('FAILED:', e); process.exit(1); });
+   "
+   ```
+   **判定**：同阶段 5——`noteId` 对得上，`count`/`gifs ok` 都是 `18`。
+
+8. **备份 profile**：不需要进容器，直接打包宿主机上挂载的目录（先停容器，跟裸机方案"先停 chrome 再 cp"的理由一样——避免备份到写入中的 SQLite cookie 库）：
+   ```bash
+   docker compose -f docker-compose.tierA.yml stop worker
+   sudo tar czf /tmp/chrome-profile-19222-$(date +%F).tar.gz -C /opt/xhs-worker/instances/19222 chrome-profile
+   docker compose -f docker-compose.tierA.yml start worker
+   ```
+
+9. 接 Tier B、阶段 8/9 的端到端和健康检查验证跟裸机部署完全一样——`/api/health` 读的是 Redis，跟 Tier A 是不是容器化无关。
 
 ## 出问题了怎么办
 
