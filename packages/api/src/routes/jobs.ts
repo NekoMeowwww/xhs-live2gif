@@ -11,7 +11,9 @@ export async function registerJobRoutes(app: FastifyInstance): Promise<void> {
   // This allowlist check is the system's main SSRF/abuse boundary — reject
   // anything that isn't a Xiaohongshu note URL/short-link before it ever
   // reaches the queue or the logged-in browser (plan section 3).
-  app.post<{ Body: CreateJobBody }>("/api/jobs", async (request, reply) => {
+  // Rate limit only applies here, not to the GET status-polling route below
+  // — see the `global: false` note in src/index.ts for why that matters.
+  app.post<{ Body: CreateJobBody }>("/api/jobs", { config: { rateLimit: {} } }, async (request, reply) => {
     const url = request.body?.url;
     if (!url || typeof url !== "string" || !isAllowedInputUrl(url)) {
       return reply.code(400).send({

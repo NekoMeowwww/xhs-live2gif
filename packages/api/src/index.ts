@@ -16,7 +16,15 @@ async function main(): Promise<void> {
   // and backed by Redis so the limit holds across multiple API instances
   // (plan section 3). Tune up only once worker/account health data (see
   // GET /api/health) shows headroom — not before.
+  //
+  // global: false — only the route(s) that opt in via `config.rateLimit`
+  // (see routes/jobs.ts) are limited. Without this, @fastify/rate-limit
+  // defaults to limiting EVERY route, including the frontend's own
+  // GET /api/jobs/:jobId status polling — which burns through the 1/minute
+  // budget on its own within seconds and makes the limit look permanently
+  // stuck even after waiting a full minute.
   await app.register(rateLimit, {
+    global: false,
     max: 1,
     timeWindow: "1 minute",
     redis: connection,
