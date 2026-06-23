@@ -1,0 +1,28 @@
+[Unit]
+Description=Real headed Chrome with CDP enabled for worker instance %i (Xiaohongshu worker, Tier A)
+After=xhs-xvfb.service
+Requires=xhs-xvfb.service
+
+[Service]
+User=xhsworker
+Environment=DISPLAY=:99
+# Deliberately NOT --headless: a real windowed Chrome renders/fingerprints
+# closer to a genuine user session, which matters against Xiaohongshu's
+# anti-bot fingerprinting. --user-data-dir is the persistent login-session
+# profile for THIS instance — treat it as a credential (see
+# docs/runbook-relogin.md and packages/worker/bootstrap/cookie-import.js).
+#
+# This is a templated unit: %i is the instance's CDP port AND its directory
+# name under /opt/xhs-worker/instances/, e.g. `systemctl enable --now
+# xhs-chrome@19222` and `xhs-chrome@19223` for a second account+chrome+worker
+# triplet (see AGENTS.md "横向扩容"). Each instance gets its own port so
+# multiple Chrome windows can share the one Xvfb display (:99) without
+# colliding. Never reuse 9222 — see infra/systemd note history / AGENTS.md
+# hard rule 9 for why that port specifically is cursed on this kind of host.
+ExecStartPre=/bin/mkdir -p /opt/xhs-worker/instances/%i/chrome-profile
+ExecStart=/usr/bin/google-chrome --remote-debugging-port=%i --remote-debugging-address=127.0.0.1 --user-data-dir=/opt/xhs-worker/instances/%i/chrome-profile --remote-allow-origins=* --no-first-run --no-default-browser-check --window-size=1920,1080
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

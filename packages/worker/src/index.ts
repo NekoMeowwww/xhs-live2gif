@@ -6,9 +6,18 @@ import { checkSessionHealth } from "./health";
 
 const REDIS_URL = process.env.XHS_REDIS_URL ?? "redis://127.0.0.1:6379";
 const QUEUE_NAME = "xhs-extract";
-const HEALTH_QUEUE_NAME = "xhs-health";
-const HEALTH_STATUS_KEY = "xhs:health:last";
 const ALERT_WEBHOOK_URL = process.env.XHS_ALERT_WEBHOOK_URL;
+
+// Identifies this account+chrome+worker triplet (see AGENTS.md "横向扩容").
+// Defaults to "default" for a lone single-instance deployment. Scoping the
+// health queue/key/repeatable-job-id by instance is what lets N of these
+// processes share one Redis without each instance's health check stealing or
+// clobbering another instance's job/status — the xhs-extract queue above
+// stays unscoped on purpose, since THAT is the thing meant to be shared.
+const INSTANCE_ID = process.env.XHS_INSTANCE_ID ?? "default";
+const HEALTH_QUEUE_NAME = `xhs-health:${INSTANCE_ID}`;
+const HEALTH_STATUS_KEY = `xhs:health:last:${INSTANCE_ID}`;
+const HEALTH_INSTANCES_SET_KEY = "xhs:health:instances";
 
 const connection = new IORedis(REDIS_URL, { maxRetriesPerRequest: null });
 
@@ -52,8 +61,11 @@ const healthWorker = new Worker(
   async () => {
     const status = await checkSessionHealth();
     await connection.set(HEALTH_STATUS_KEY, JSON.stringify(status));
+    await connection.sadd(HEALTH_INSTANCES_SET_KEY, INSTANCE_ID);
     if (!status.sessionOk && lastSessionOk) {
-      await sendAlert(`XHS session unhealthy: ${status.detail ?? "unknown"} — see docs/runbook-relogin.md`);
+      await sendAlert(
+        `XHS session unhealthy (instance "${INSTANCE_ID}"): ${status.detail ?? "unknown"} — see docs/runbook-relogin.md`,
+      );
     }
     lastSessionOk = status.sessionOk;
     return status;
@@ -72,7 +84,7 @@ async function scheduleHealthCheck(): Promise<void> {
     {},
     {
       repeat: { every: 15 * 60 * 1000 },
-      jobId: "xhs-health-check",
+      jobId: `xhs-health-check:${INSTANCE_ID}`,
     },
   );
 }
@@ -81,4 +93,6 @@ scheduleHealthCheck().catch((err) => {
   console.error(`[health] failed to schedule repeatable check: ${String(err)}`);
 });
 
-console.log(`[worker] listening on queue "${QUEUE_NAME}" (concurrency=1); health checks every 15min`);
+console.log(
+  `[worker "${INSTANCE_ID}"] listening on shared queue "${QUEUE_NAME}" (concurrency=1); health checks every 15min`,
+);

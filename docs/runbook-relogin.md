@@ -6,16 +6,19 @@
 
 - `GET /api/health` 返回 `sessionOk: false`（worker 每 15 分钟自动跑的健康检查，见 `packages/worker/src/health.ts`）。
 - 收到 `XHS_ALERT_WEBHOOK_URL` 发出的告警消息。
-- worker 日志（`journalctl -u xhs-worker -f`）里导航之后解析不到 `noteId`，或对已知笔记 eval 不到 `noteDetailMap`（`packages/worker/src/extract.ts` 通过 `cdp.ts` 直连 Chrome 的 CDP，不经过 opencli——见 `docs/cdp-bootstrap.md` 开头说明）。
+- worker 日志（`journalctl -u xhs-worker@<port> -f`）里导航之后解析不到 `noteId`，或对已知笔记 eval 不到 `noteDetailMap`（`packages/worker/src/extract.ts` 通过 `cdp.ts` 直连 Chrome 的 CDP，不经过 opencli——见 `docs/cdp-bootstrap.md` 开头说明）。
 - 4xx/超时在短时间内激增。
+- 多实例部署时，`GET /api/health` 的 `instances` 字段会指明具体是哪个端口/账号出的问题——下面的步骤只针对那一个实例操作，其它实例不用动。
 
 ## 处理步骤
 
+下面用 `19222` 代表出问题的那个实例的端口，按实际情况替换。
+
 1. **暂停接单**，避免在排查期间继续产生失败任务：
    ```bash
-   sudo systemctl stop xhs-worker
+   sudo systemctl stop xhs-worker@19222
    ```
-   （只停 worker，`xhs-xvfb`/`xhs-chrome` 继续跑——Chrome session 本身不动。）
+   （只停这一个实例的 worker，`xhs-xvfb`/`xhs-chrome@19222`继续跑——Chrome session 本身不动；其他实例的 worker 不受影响，继续正常接单。）
 
 2. **临时开 VNC 看一眼 Xvfb 里 Chrome 实际显示了什么**：
    ```bash
@@ -47,14 +50,14 @@
 
 6. **立刻备份新的 profile**（不要等夜间 cron）：
    ```bash
-   sudo systemctl stop xhs-chrome
-   sudo cp -a /opt/xhs-worker/chrome-profile /tmp/chrome-profile-backup-$(date +%F)
-   sudo systemctl start xhs-chrome
+   sudo systemctl stop xhs-chrome@19222
+   sudo cp -a /opt/xhs-worker/instances/19222/chrome-profile /tmp/chrome-profile-19222-backup-$(date +%F)
+   sudo systemctl start xhs-chrome@19222
    ```
 
 7. **恢复接单**：
    ```bash
-   sudo systemctl start xhs-worker
+   sudo systemctl start xhs-worker@19222
    ```
 
 8. **记录这次事故**（哪怕只是一行）：时间、触发信号是什么、用了多久恢复。记录格式建议：
@@ -65,7 +68,7 @@
 
 ## 决策：要不要上第二个账号
 
-把第 8 步的记录攒起来看：**如果同一个月内触发超过一次**，说明单账号撑不住当前的访问量/风控敏感度，应该启动多账号池（每个账号配一套独立的 Chrome profile + worker 进程，都消费同一个 BullMQ 队列），而不是继续靠人工救一个账号。新增账号的步骤和这份 runbook、`docs/cdp-bootstrap.md` 完全一样，只是 profile 目录、systemd unit 名字换一套（如 `xhs-chrome-2.service`、`xhs-worker-2.service`）。
+把第 8 步的记录攒起来看：**如果同一个月内触发超过一次**，说明单账号撑不住当前的访问量/风控敏感度，应该启动多账号池（每个账号配一套独立的 Chrome profile + worker 进程，都消费同一个 BullMQ 队列），而不是继续靠人工救一个账号。新增账号实例的具体步骤见 `AGENTS.md` 的"横向扩容：新增一个账号实例"一节——`xhs-chrome@.service`/`xhs-worker@.service` 是 systemd 模板单元，加一个实例只是换一个新端口号（如 `xhs-chrome@19223`），不用改单元文件本身。
 
 ## Plan B：cookie 导入完全跑不通时的备选登录方式
 

@@ -8,6 +8,8 @@
 
 所以 `packages/worker` 不再依赖 `opencli` CLI 本身——`packages/worker/src/cdp.ts` 直接用 `chrome-remote-interface` 连 Chrome 的 CDP 端口（和 `cookie-import.js` 一直用的方式一样）。**Tier A 服务器不需要装 `opencli`。** `opencli` 只在桌面端（装了扩展、真人登录的 Chrome，比如 `scripts/xhs-live2gif.sh` 这个手动调试脚本）才有用。
 
+这份文档走的是第一个实例（端口 19222）。要再加一个账号实例（横向扩容并发吞吐，而不是调高 worker 的 `concurrency`），照这份文档把端口换成新数字重新走一遍即可——具体清单见 `AGENTS.md` 的"横向扩容：新增一个账号实例"一节。
+
 ## 0. 前置
 
 - 一台 Linux 服务器（用户现有云服务器即可），能装 `xvfb`、`google-chrome-stable`、Node.js 20+。
@@ -27,9 +29,9 @@ sudo apt-get install -y /tmp/chrome.deb
 
 ```bash
 sudo useradd -r -m -d /opt/xhs-worker xhsworker
-sudo mkdir -p /opt/xhs-worker/chrome-profile
+sudo mkdir -p /opt/xhs-worker/instances/19222/chrome-profile
 sudo chown -R xhsworker:xhsworker /opt/xhs-worker
-sudo chmod 700 /opt/xhs-worker/chrome-profile
+sudo chmod 700 /opt/xhs-worker/instances/19222/chrome-profile
 ```
 
 ## 2. 部署代码
@@ -51,15 +53,17 @@ npm run build
 ss -ltnp | grep 19222 || echo "端口空闲，可以继续"
 ```
 
-如果输出非空，说明已经有别的进程占了这个端口，先弄清楚是什么（`ss -ltnp` 输出里带 PID），停掉它或者把 `infra/systemd/xhs-chrome.service` 和 `infra/systemd/xhs-worker.service` 里的端口号一起换成另一个没人用的数字，不要硬启。
+如果输出非空，说明已经有别的进程占了这个端口，先弄清楚是什么（`ss -ltnp` 输出里带 PID），停掉它或者干脆换一个没人用的端口号作为这个实例的标识（下面所有命令里的 `19222` 一起换掉）。
 
 ```bash
-sudo cp infra/systemd/xhs-xvfb.service infra/systemd/xhs-chrome.service infra/systemd/xhs-worker.service /etc/systemd/system/
+sudo cp infra/systemd/xhs-xvfb.service infra/systemd/xhs-chrome@.service infra/systemd/xhs-worker@.service /etc/systemd/system/
 sudo systemctl daemon-reload
-sudo systemctl enable --now xhs-xvfb xhs-chrome
+sudo systemctl enable --now xhs-xvfb xhs-chrome@19222
 sleep 2
 curl http://127.0.0.1:19222/json/version
 ```
+
+`xhs-chrome@.service`/`xhs-worker@.service` 是 systemd 模板单元，`@` 后面的 `19222` 是这个实例的参数，会代入单元文件里的 `%i`（同时作为端口号和 profile 目录名）。
 
 **判定**：返回一段包含 `"Browser"` 字段的 JSON，且这个 JSON 里的 `Browser` 字段应该是 `Chrome/...`（不是别的工具，比如 `HeadlessChrome` 通常意味着是别的 Playwright/Puppeteer 进程占了这个端口，不是我们自己的 `xhs-chrome`）。
 
@@ -87,6 +91,7 @@ curl http://127.0.0.1:19222/json/version
 ```bash
 cd /opt/xhs-worker/app/packages/worker
 sudo -u xhsworker node bootstrap/cookie-import.js xhs-cookies.json
+# 第二个及以后的实例：CDP_PORT=<该实例端口> node bootstrap/cookie-import.js xhs-cookies-2.json
 ```
 
 脚本会把 cookie 注入这台 Linux Chrome 的 profile，导航到 `xiaohongshu.com` 并打印一行 `Page probe after navigation: has-user-state`（或 `no-user-state`）——这就是验证结果，不需要再额外跑别的命令确认（注：之前这里写的是用 `opencli browser ... eval` 二次确认，已确认 opencli 在这个场景下不可用，删掉了那条建议）。
@@ -98,8 +103,8 @@ sudo -u xhsworker node bootstrap/cookie-import.js xhs-cookies.json
 ## 5. 启动 worker，跑一次烟雾测试
 
 ```bash
-sudo systemctl enable --now xhs-worker
-sudo systemctl status xhs-worker
+sudo systemctl enable --now xhs-worker@19222
+sudo systemctl status xhs-worker@19222
 ```
 
 验证（对应方案第 6 节验证步骤 1-2，用 worker 自己编译出来的代码直接测，不再依赖 `opencli`/bash 脚本）：
@@ -134,10 +139,10 @@ fs.mkdirSync(path.join(tmp, 'gif'), { recursive: true });
 ## 6. 备份 Chrome profile
 
 ```bash
-sudo systemctl stop xhs-chrome
-sudo cp -a /opt/xhs-worker/chrome-profile /tmp/chrome-profile-backup
-sudo systemctl start xhs-chrome
-tar czf chrome-profile-$(date +%F).tar.gz -C /tmp chrome-profile-backup
+sudo systemctl stop xhs-chrome@19222
+sudo cp -a /opt/xhs-worker/instances/19222/chrome-profile /tmp/chrome-profile-backup
+sudo systemctl start xhs-chrome@19222
+tar czf chrome-profile-19222-$(date +%F).tar.gz -C /tmp chrome-profile-backup
 # 上传到对象存储，保留 7 天，权限收紧（见方案 1.3）
 ```
 

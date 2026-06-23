@@ -27,6 +27,14 @@ export interface HealthStatus {
   detail?: string;
 }
 
+// One entry per account+chrome+worker instance (see AGENTS.md "横向扩容").
+// Overall sessionOk is true only when every known instance is healthy —
+// any one account being down still means a slice of incoming jobs will fail.
+export interface AggregateHealthStatus {
+  sessionOk: boolean;
+  instances: Record<string, HealthStatus>;
+}
+
 export type JobStage = "extracting" | "downloading" | "converting" | "uploading";
 
 export interface JobProgress {

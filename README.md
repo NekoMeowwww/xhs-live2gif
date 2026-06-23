@@ -64,21 +64,22 @@ worker 和 API 需要的环境变量分别见 [`infra/worker.env.example`](infra
 | `XHS_REDIS_URL` | BullMQ 队列 + 限流共享存储 |
 | `XHS_S3_*` | 结果文件（GIF/zip）的对象存储，S3 兼容 |
 | `XHS_CDP_ENDPOINT` | Chrome 的 CDP 地址，默认 `http://127.0.0.1:19222`（端口故意不用 9222，见下方风险说明） |
+| `XHS_INSTANCE_ID` | 标识这个账号+Chrome+worker 实例（默认 `default`），用来隔离多实例各自的健康检查队列/状态键；生产环境的 systemd 模板单元会自动把端口号代入这个变量 |
 | `XHS_ALERT_WEBHOOK_URL` | session 掉线时的告警 webhook |
 
 ## 部署到生产（Linux，不需要 Windows）
 
 完整步骤见 [`docs/cdp-bootstrap.md`](docs/cdp-bootstrap.md)，简要分两层：
 
-- **Tier A（有状态）**：一台机器跑 Xvfb + 有头 Chrome（CDP 模式）+ Node worker，持有唯一一份登录态。用 `infra/systemd/*.service` 管理，故意不用容器（Chrome 的显示/sandbox 在容器里太麻烦，且这是单实例、不该频繁重建的资源）。
+- **Tier A（有状态）**：一台机器跑 Xvfb + 有头 Chrome（CDP 模式）+ Node worker，持有登录态。用 `infra/systemd/xhs-chrome@.service` / `xhs-worker@.service`（systemd 模板单元，`@<端口>` 是实例参数，比如 `xhs-chrome@19222`）管理，故意不用容器（Chrome 的显示/sandbox 在容器里太麻烦，且这是不该频繁重建的资源）。
 - **Tier B（无状态）**：API + 前端 + Redis，用 `infra/docker-compose.api.yml` 起，可以随时重建/扩容，永远碰不到 Chrome 的登录态。
 
-两层只通过 Redis 队列通信。
+两层只通过 Redis 队列通信。**扩容是加更多"账号+Chrome+worker"实例**（每个实例一个独立账号、一个独立端口，比如再开一份 `xhs-chrome@19223`/`xhs-worker@19223`），都消费同一个 BullMQ 队列——具体步骤见 [`AGENTS.md`](AGENTS.md)。
 
 ## 安全 / 风险
 
 - `packages/shared/src/validation.ts` 是唯一的输入边界：只接受 `xiaohongshu.com` 笔记链接和 `xhslink.com` 短链，其他一律拒绝——没有这层，"把任意链接丢进已登录浏览器"就是一个开放 SSRF。
 - 所有子进程调用（`curl`/`ffmpeg`）都用数组参数 + `execFile`，不拼 shell 字符串。
-- 单账号背后只有一个 Chrome session，worker 并发数锁定为 1——扩容靠加"账号+Chrome+worker"整套副本，不是调高并发数。
+- 单个实例背后只有一个账号、一个 Chrome session，**worker 并发数锁定为 1**——同一身份在同一瞬间并发访问，正是自动化指纹最容易被抓的模式。扩容靠加"账号+Chrome+worker"整套副本，不是调高这个并发数（这是硬性架构约束，不是性能调优旋钮）。
 - Chrome 的 CDP 端口固定用 19222、绑定 `127.0.0.1`，不要用默认的 9222——那是 Puppeteer/Playwright 等工具的通用默认端口，共享服务器上实测发生过撞车（被一个无关的 root 进程占着）。
 - 这类自动化只读访问本质上仍处于平台 ToS 的灰色地带；建账号、限流、监控告警等缓解措施见 [`docs/runbook-relogin.md`](docs/runbook-relogin.md)，但风险不能降到零，公开推广前请知情承担。

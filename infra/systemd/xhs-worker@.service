@@ -1,0 +1,24 @@
+[Unit]
+Description=XHS live-photo-to-gif Node worker instance %i (BullMQ consumer, Tier A)
+After=xhs-chrome@%i.service
+Requires=xhs-chrome@%i.service
+
+[Service]
+User=xhsworker
+# %i doubles as XHS_INSTANCE_ID (scopes this instance's health-check
+# queue/key so N instances sharing one Redis don't steal or clobber each
+# other's health checks — see packages/worker/src/index.ts) and as the CDP
+# port to connect to (must match xhs-chrome@%i.service above).
+Environment=XHS_INSTANCE_ID=%i
+Environment=XHS_CDP_ENDPOINT=http://127.0.0.1:%i
+# Shared across every instance: Redis URL, S3 creds, alert webhook, the
+# known-good healthcheck note. Per-instance values live only in the
+# Environment= lines above, not in this file.
+EnvironmentFile=/opt/xhs-worker/worker.env
+WorkingDirectory=/opt/xhs-worker/app/packages/worker
+ExecStart=/usr/bin/node dist/index.js
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

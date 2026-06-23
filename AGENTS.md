@@ -6,15 +6,16 @@
 
 这些规则没有例外，不要因为"看起来能跑通"就绕过：
 
-1. **不要把 worker 并发数从 1 调高。** 单账号背后只有一个 Chrome session，这不是性能瓶颈，是反爬底线（见 `packages/worker/src/index.ts` 里的注释）。要加吞吐量，是复制一整套"账号+Chrome+worker"，不是改这个数字。
-2. **`/opt/xhs-worker/chrome-profile/` 和任何 cookie JSON 文件等同账号凭证。** 不要 `cat`/打印它们的内容到日志或回复里，不要把它们提交进 git，迁移完成后立刻删除临时 cookie 文件（`docs/cdp-bootstrap.md` 第 4 步已经写了，照做）。
+1. **不要把 worker 并发数从 1 调高。** 单账号背后只有一个 Chrome session，这不是性能瓶颈，是反爬底线（见 `packages/worker/src/index.ts` 里的注释）。要加吞吐量，是复制一整套"账号+Chrome+worker"，按下方"横向扩容：新增一个账号实例"的步骤来，不是改这个数字。
+2. **`/opt/xhs-worker/instances/<port>/chrome-profile/` 和任何 cookie JSON 文件等同账号凭证。** 不要 `cat`/打印它们的内容到日志或回复里，不要把它们提交进 git，迁移完成后立刻删除临时 cookie 文件（`docs/cdp-bootstrap.md` 第 4 步已经写了，照做）。
 3. **不要往公网暴露 Redis（6379）。** Tier A 的 worker 连 Tier B 的 Redis 必须走防火墙/安全组限制到 Tier A 的 IP，不要为了"先跑起来"临时全开。
 4. **改限流数值（`packages/api/src/index.ts` 里的 `max: 1, timeWindow: "1 minute"`）需要人类批准。** 这是账号风险和滥用风险之间的平衡，不是纯技术参数，调之前先汇报现状（账号健康检查历史、实际请求量）再问。
 5. **遇到登录墙/验证码/短信验证，停下来找人类处理，不要自己猜着点。** 自动化"处理验证码"这件事本身就是风控最想抓的行为模式。
 6. **任何 `git push --force`、删除 Chrome profile、重置 S3 bucket 之类不可逆操作，执行前必须先汇报打算做什么并等待确认。**
 7. **不要修改 `packages/worker/src/extract.ts` 里的提取 JS 或 `convert.ts` 里的 ffmpeg 滤镜图**，除非先用已知笔记（见下方"已知良好笔记"）验证过修改后的版本仍然能跑出一致结果。这段逻辑已经端到端验证过，不要凭直觉"优化"它。
 8. **worker 不依赖 `opencli` CLI，也不需要在 Tier A 服务器上装它。** 已经源码级确认：opencli 1.8.4 的 `browser` 子命令不支持 `OPENCLI_CDP_ENDPOINT`，强制走浏览器扩展桥接，而扩展在无 GUI 的 Linux 服务器上装不上。`packages/worker/src/cdp.ts` 直连 Chrome 的 CDP 端口（`chrome-remote-interface`），不经过 opencli。**如果你在 Tier A 上遇到任何"扩展未连接/disconnected"之类的报错，不要去修扩展——那是在解决一个我们已经绕开的问题，先检查 `XHS_CDP_ENDPOINT` 是不是指向了正确的端口、Chrome 是不是真的监听在那个端口上。**
-9. **Chrome 的调试端口固定用 19222，不要改回 9222。** 9222 是 Puppeteer/Playwright 等工具的通用默认端口，共享服务器上极易撞车（实际发生过：一个无关的、root 启动的 Playwright Chrome 占着 9222，导致我们自己的 `xhs-chrome` 被挤到 IPv6 地址上，引发一堆诡异的连接问题）。起 `xhs-chrome.service` 前先用 `ss -ltnp | grep 19222` 确认端口没被占用。
+9. **Chrome 的调试端口第一个实例固定用 19222，不要改回 9222。** 9222 是 Puppeteer/Playwright 等工具的通用默认端口，共享服务器上极易撞车（实际发生过：一个无关的、root 启动的 Playwright Chrome 占着 9222，导致我们自己的 `xhs-chrome` 被挤到 IPv6 地址上，引发一堆诡异的连接问题）。起任何 `xhs-chrome@<port>.service` 前先用 `ss -ltnp | grep <port>` 确认端口没被占用。
+10. **新增账号实例（横向扩容）必须走下方"横向扩容"那一节的步骤，不要现场临时拍一个端口号就上。** 端口号同时是 systemd 模板单元的实例参数（`xhs-chrome@<port>`/`xhs-worker@<port>`）、profile 目录名、`XHS_INSTANCE_ID`——三处必须一致，错位的后果是两个账号的健康检查互相覆盖却看不出报错。
 
 ## 已知良好笔记（到处都会用到，记住它）
 
@@ -48,10 +49,12 @@ sudo apt-get install -y xvfb
 curl -fsSL https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb -o /tmp/chrome.deb
 sudo apt-get install -y /tmp/chrome.deb
 sudo useradd -r -m -d /opt/xhs-worker xhsworker
-sudo mkdir -p /opt/xhs-worker/chrome-profile
+sudo mkdir -p /opt/xhs-worker/instances/19222/chrome-profile
 sudo chown -R xhsworker:xhsworker /opt/xhs-worker
-sudo chmod 700 /opt/xhs-worker/chrome-profile
+sudo chmod 700 /opt/xhs-worker/instances/19222/chrome-profile
 ```
+
+（`xhs-chrome@.service` 自己的 `ExecStartPre` 也会 `mkdir -p` 这个目录，这里手动建一次只是为了能在阶段 4 之前就 `chmod 700` 它。19222 是第一个实例的端口——后续每加一个账号实例就重复这两条 `mkdir`/`chmod`，换成新端口号。）
 
 **判定**：`google-chrome --version` 和 `Xvfb -help` 都能正常输出，不报命令未找到。
 
@@ -78,16 +81,18 @@ ss -ltnp | grep 19222
 ```
 
 ```bash
-sudo cp infra/systemd/xhs-xvfb.service infra/systemd/xhs-chrome.service /etc/systemd/system/
+sudo cp infra/systemd/xhs-xvfb.service infra/systemd/xhs-chrome@.service /etc/systemd/system/
 sudo systemctl daemon-reload
-sudo systemctl enable --now xhs-xvfb xhs-chrome
+sudo systemctl enable --now xhs-xvfb xhs-chrome@19222
 sleep 3
 curl http://127.0.0.1:19222/json/version
 ```
 
-**判定**：`curl` 返回一段包含 `"Browser"` 字段的 JSON，不是连接拒绝，且 `Browser` 字段是 `Chrome/...`（不是 `HeadlessChrome` 之类——那通常意味着连到了别的工具，不是我们自己的 `xhs-chrome`）。`systemctl status xhs-xvfb xhs-chrome` 都是 `active (running)`。
+`xhs-chrome@.service` 是模板单元（`@` 后面留空），`19222` 是这次启动的实例参数，会被代入 `%i`（端口号 + profile 目录名）——见单元文件里的注释。
 
-**先不要装 `xhs-worker.service`**——这台 Chrome 的 profile 是空的，没有登录态，worker 跑起来也只会不断失败。下一步必须先建立登录态。
+**判定**：`curl` 返回一段包含 `"Browser"` 字段的 JSON，不是连接拒绝，且 `Browser` 字段是 `Chrome/...`（不是 `HeadlessChrome` 之类——那通常意味着连到了别的工具，不是我们自己的 `xhs-chrome`）。`systemctl status xhs-xvfb xhs-chrome@19222` 都是 `active (running)`。
+
+**先不要装 `xhs-worker@19222.service`**——这台 Chrome 的 profile 是空的，没有登录态，worker 跑起来也只会不断失败。下一步必须先建立登录态。
 
 ### 阶段 4：迁移登录态 ——cookie 导出必须由人类手动做，照 `docs/cdp-bootstrap.md` 第 4 步执行
 
@@ -108,10 +113,10 @@ curl http://127.0.0.1:19222/json/version
 ### 阶段 5：起 worker，跑端到端验证
 
 ```bash
-sudo cp /opt/xhs-worker/app/infra/systemd/xhs-worker.service /etc/systemd/system/
+sudo cp /opt/xhs-worker/app/infra/systemd/xhs-worker@.service /etc/systemd/system/
 sudo systemctl daemon-reload
-sudo systemctl enable --now xhs-worker
-sudo systemctl status xhs-worker
+sudo systemctl enable --now xhs-worker@19222
+sudo systemctl status xhs-worker@19222
 ```
 
 直接用 worker 自己编译出来的代码验证（不经过 opencli/bash 脚本，硬性规则 8）：
@@ -144,12 +149,14 @@ fs.mkdirSync(path.join(tmp, 'gif'), { recursive: true });
 ### 阶段 6：备份 Chrome profile
 
 ```bash
-sudo systemctl stop xhs-chrome
-sudo cp -a /opt/xhs-worker/chrome-profile /tmp/chrome-profile-backup
-sudo systemctl start xhs-chrome
-tar czf /tmp/chrome-profile-$(date +%F).tar.gz -C /tmp chrome-profile-backup
+sudo systemctl stop xhs-chrome@19222
+sudo cp -a /opt/xhs-worker/instances/19222/chrome-profile /tmp/chrome-profile-backup
+sudo systemctl start xhs-chrome@19222
+tar czf /tmp/chrome-profile-19222-$(date +%F).tar.gz -C /tmp chrome-profile-backup
 rm -rf /tmp/chrome-profile-backup
 ```
+
+（多实例时，对每个端口重复这一套，备份文件名带上端口号区分。）
 
 把这个 tar.gz 上传到 S3（`xhs-ops-backups/` 之类的前缀，和产品的 `xhs-gifs/` 分开），然后删掉本地副本。建议把这一步写成 cron（每天一次），但**第一次手动跑一遍确认流程通**之后才接 cron。
 
@@ -195,7 +202,21 @@ for i in 1 2; do curl -s -o /dev/null -w '%{http_code}\n' -X POST http://localho
 curl -s http://localhost/api/health
 ```
 
-**判定**：`sessionOk: true`。如果配了 `XHS_ALERT_WEBHOOK_URL`，建议人为制造一次失败（比如临时 `systemctl stop xhs-chrome` 几分钟）确认告警真的会发出来，再 `systemctl start xhs-chrome` 恢复。
+**判定**：返回形如 `{"sessionOk": true, "instances": {"19222": {"sessionOk": true, ...}}}`——顶层 `sessionOk` 是所有已上报实例的 AND，单实例部署时它和 `instances` 里那一个值应该完全一致。如果配了 `XHS_ALERT_WEBHOOK_URL`，建议人为制造一次失败（比如临时 `systemctl stop xhs-chrome@19222` 几分钟）确认告警真的会发出来，再 `systemctl start xhs-chrome@19222` 恢复。
+
+## 横向扩容：新增一个账号实例
+
+只在收到人类明确要求扩容、且已经按硬性规则 5 准备好一个新的专用小红书账号时才执行这一节——不要自己判断"流量大了该扩容了"就主动做。
+
+1. **选一个未被占用的端口**，作为这个新实例的标识（同时是 CDP 端口、`XHS_INSTANCE_ID`、profile 目录名）。沿用递增规律：19223、19224……执行前用 `ss -ltnp | grep <port>` 确认空闲（硬性规则 9/10）。
+2. 建目录：`sudo mkdir -p /opt/xhs-worker/instances/<port>/chrome-profile && sudo chown -R xhsworker:xhsworker /opt/xhs-worker/instances/<port> && sudo chmod 700 /opt/xhs-worker/instances/<port>/chrome-profile`。
+3. 起 Chrome：`sudo systemctl enable --now xhs-chrome@<port>`，按阶段 3 的判定标准验证（`curl http://127.0.0.1:<port>/json/version`）。
+4. 迁移登录态：完全重复阶段 4——人类用新账号手动导出 cookie，`cookie-import.js` 这次要带上新端口：`CDP_PORT=<port> node cookie-import.js xhs-cookies-2.json`，判定标准同阶段 4（`has-user-state`），完成后立刻删 cookie 文件。
+5. 起 worker：`sudo systemctl enable --now xhs-worker@<port>`，重复阶段 5 的端到端验证（同一个已知良好笔记，同样要求 `count`/`gifs ok` 都是 18）——**这一步必须独立验证这个新实例，不能因为老实例跑得好就跳过**，每个账号背后是完全独立的 Chrome session 和登录态。
+6. 确认 `GET /api/health` 的 `instances` 里出现了这个新端口号对应的 key，且 `sessionOk: true`。
+7. 备份这个新实例的 profile（阶段 6 的步骤，换成新端口）。
+
+完成后向人类汇报：新实例的端口号、阶段 5/健康检查的验证结果、现在总共有几个实例在跑。
 
 ## 出问题了怎么办
 
