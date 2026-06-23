@@ -208,6 +208,14 @@ curl -s http://localhost/api/health
 
 只在收到人类明确要求扩容、且已经按硬性规则 5 准备好一个新的专用小红书账号时才执行这一节——不要自己判断"流量大了该扩容了"就主动做。
 
+**默认选择独立服务器（推荐），不是同一台机器加端口。** 同一台服务器上的多个账号共享同一个出口 IP，小红书风控会把同 IP 下的多账号关联起来判定——这会让"分账号隔离风险"的设计目的失效，一台机器的 IP 被标记可能连带拖垮其他账号。除非人类明确说"先省一台机器、就跑同一台上"，否则走下面 A 路径。
+
+### A. 独立服务器（推荐路径）
+
+新服务器 = 全新的 Tier A，**直接照搬 `docs/cdp-bootstrap.md` 和本文档阶段 1-6 全套流程跑一遍**，端口就用默认的 19222（不同机器之间不会冲突，不需要 `@<port>` 模板），`XHS_INSTANCE_ID` 也留默认值即可。唯一的共享点是 `worker.env` 里的 `XHS_REDIS_URL`——必须指向和第一台机器同一个 Tier B Redis（按硬性规则 3，新机器到 Redis 的访问也要走防火墙/安全组限制，不要为图方便临时全开）。验证标准和阶段 5/9 完全一致。
+
+### B. 同一台服务器追加实例（仅在人类明确要求"先省一台机器"时才用）
+
 1. **选一个未被占用的端口**，作为这个新实例的标识（同时是 CDP 端口、`XHS_INSTANCE_ID`、profile 目录名）。沿用递增规律：19223、19224……执行前用 `ss -ltnp | grep <port>` 确认空闲（硬性规则 9/10）。
 2. 建目录：`sudo mkdir -p /opt/xhs-worker/instances/<port>/chrome-profile && sudo chown -R xhsworker:xhsworker /opt/xhs-worker/instances/<port> && sudo chmod 700 /opt/xhs-worker/instances/<port>/chrome-profile`。
 3. 起 Chrome：`sudo systemctl enable --now xhs-chrome@<port>`，按阶段 3 的判定标准验证（`curl http://127.0.0.1:<port>/json/version`）。
@@ -216,7 +224,7 @@ curl -s http://localhost/api/health
 6. 确认 `GET /api/health` 的 `instances` 里出现了这个新端口号对应的 key，且 `sessionOk: true`。
 7. 备份这个新实例的 profile（阶段 6 的步骤，换成新端口）。
 
-完成后向人类汇报：新实例的端口号、阶段 5/健康检查的验证结果、现在总共有几个实例在跑。
+完成后向人类汇报：用的是 A 还是 B 路径、新实例的标识（独立服务器就是机器名/IP，同机就是端口号）、阶段 5/健康检查的验证结果、现在总共有几个实例在跑。
 
 ## 出问题了怎么办
 

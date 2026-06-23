@@ -74,7 +74,7 @@ worker 和 API 需要的环境变量分别见 [`infra/worker.env.example`](infra
 - **Tier A（有状态）**：一台机器跑 Xvfb + 有头 Chrome（CDP 模式）+ Node worker，持有登录态。用 `infra/systemd/xhs-chrome@.service` / `xhs-worker@.service`（systemd 模板单元，`@<端口>` 是实例参数，比如 `xhs-chrome@19222`）管理，故意不用容器（Chrome 的显示/sandbox 在容器里太麻烦，且这是不该频繁重建的资源）。
 - **Tier B（无状态）**：API + 前端 + Redis，用 `infra/docker-compose.api.yml` 起，可以随时重建/扩容，永远碰不到 Chrome 的登录态。
 
-两层只通过 Redis 队列通信。**扩容是加更多"账号+Chrome+worker"实例**（每个实例一个独立账号、一个独立端口，比如再开一份 `xhs-chrome@19223`/`xhs-worker@19223`），都消费同一个 BullMQ 队列——具体步骤见 [`AGENTS.md`](AGENTS.md)。
+两层只通过 Redis 队列通信。**扩容是加更多"账号+Chrome+worker"实例**，都消费同一个 BullMQ 队列。推荐每个实例用**独立服务器**（同台机器上的多账号共享同一个出口 IP，容易被风控关联到一起）——新机器直接照搬 `docs/cdp-bootstrap.md` 全套流程，端口用默认的 19222 即可，只需指向同一个 Tier B Redis；只有临时凑合才用同一台机器加端口（`xhs-chrome@19223`/`xhs-worker@19223`）。具体步骤见 [`AGENTS.md`](AGENTS.md)。
 
 ## 安全 / 风险
 
