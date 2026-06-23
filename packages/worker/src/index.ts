@@ -15,7 +15,10 @@ const ALERT_WEBHOOK_URL = process.env.XHS_ALERT_WEBHOOK_URL;
 // clobbering another instance's job/status — the xhs-extract queue above
 // stays unscoped on purpose, since THAT is the thing meant to be shared.
 const INSTANCE_ID = process.env.XHS_INSTANCE_ID ?? "default";
-const HEALTH_QUEUE_NAME = `xhs-health:${INSTANCE_ID}`;
+// BullMQ queue/worker names become Redis key prefixes internally and reject
+// ":" outright ("Queue name cannot contain :") — only plain Redis keys
+// (HEALTH_STATUS_KEY etc. below) are free to use it.
+const HEALTH_QUEUE_NAME = `xhs-health-${INSTANCE_ID}`;
 const HEALTH_STATUS_KEY = `xhs:health:last:${INSTANCE_ID}`;
 const HEALTH_INSTANCES_SET_KEY = "xhs:health:instances";
 
@@ -84,7 +87,7 @@ async function scheduleHealthCheck(): Promise<void> {
     {},
     {
       repeat: { every: 15 * 60 * 1000 },
-      jobId: `xhs-health-check:${INSTANCE_ID}`,
+      jobId: `xhs-health-check-${INSTANCE_ID}`,
     },
   );
 }
