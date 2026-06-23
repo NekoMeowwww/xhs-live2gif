@@ -5,7 +5,7 @@ Requires=xhs-chrome.service
 
 [Service]
 User=xhsworker
-Environment=OPENCLI_CDP_ENDPOINT=http://localhost:9222
+Environment=XHS_CDP_ENDPOINT=http://127.0.0.1:19222
 EnvironmentFile=/opt/xhs-worker/worker.env
 WorkingDirectory=/opt/xhs-worker/app/packages/worker
 ExecStart=/usr/bin/node dist/index.js

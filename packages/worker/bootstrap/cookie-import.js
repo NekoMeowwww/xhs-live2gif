@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * Run ONCE on the Linux worker host, against the freshly-started Chrome from
- * infra/systemd/xhs-chrome.service (CDP on localhost:9222, empty profile).
+ * infra/systemd/xhs-chrome.service (CDP on 127.0.0.1:19222, empty profile).
  * Injects cookies manually exported from a real, logged-in Xiaohongshu
  * Chrome session (see docs/cdp-bootstrap.md for the export steps — a
  * cookie-export extension like "Cookie-Editor", not a script: modern Chrome's
@@ -24,7 +24,7 @@ const fs = require("node:fs");
 const CDP = require("chrome-remote-interface");
 
 const COOKIES_PATH = process.argv[2];
-const CDP_PORT = Number(process.env.CDP_PORT ?? 9222);
+const CDP_PORT = Number(process.env.CDP_PORT ?? 19222);
 
 if (!COOKIES_PATH) {
   console.error("Usage: node cookie-import.js <cookies.json>");
@@ -97,10 +97,14 @@ async function main() {
         "window.__INITIAL_STATE__ && window.__INITIAL_STATE__.user ? 'has-user-state' : 'no-user-state'",
     });
     console.log(`Page probe after navigation: ${result.value}`);
-    console.log(
-      'Now verify with: OPENCLI_CDP_ENDPOINT=http://localhost:9222 opencli browser <session> eval "window.__INITIAL_STATE__.user"',
-    );
-    console.log("Confirm it shows your logged-in account, not a login wall, before relying on this profile.");
+    if (result.value === "has-user-state") {
+      console.log("Looks logged in. Double-check later (run from packages/worker/, after `npm run build`):");
+      console.log(
+        '  node -e "require(\'./dist/cdp\').withPage(\'https://www.xiaohongshu.com\', e => e(\'window.__INITIAL_STATE__.user\')).then(console.log)"',
+      );
+    } else {
+      console.log("'no-user-state' means this is still a login wall — the cookie injection did not take.");
+    }
   } finally {
     await client.close();
   }

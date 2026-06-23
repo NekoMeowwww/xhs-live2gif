@@ -1,5 +1,5 @@
 [Unit]
-Description=Real headed Chrome with CDP enabled for OpenCLI (Xiaohongshu worker, Tier A)
+Description=Real headed Chrome with CDP enabled for the worker (Xiaohongshu worker, Tier A)
 After=xhs-xvfb.service
 Requires=xhs-xvfb.service
 
@@ -10,8 +10,15 @@ Environment=DISPLAY=:99
 # closer to a genuine user session, which matters against Xiaohongshu's
 # anti-bot fingerprinting (plan section "关键风险背景"). --user-data-dir is
 # the persistent login-session profile — treat it as a credential (see
-# docs/runbook-relogin.md and packages/worker/bootstrap/cookie-import.ts).
-ExecStart=/usr/bin/google-chrome --remote-debugging-port=9222 --user-data-dir=/opt/xhs-worker/chrome-profile --remote-allow-origins=* --no-first-run --no-default-browser-check --window-size=1920,1080
+# docs/runbook-relogin.md and packages/worker/bootstrap/cookie-import.js).
+#
+# Port 19222, not the default 9222: 9222 is the universal default debug
+# port for Chrome/Puppeteer/Playwright and collides easily with other
+# tooling on a shared host (this happened during rollout — an unrelated
+# root-owned Playwright Chrome was already squatting 9222). --remote-debugging-address
+# pins the bind to IPv4 only, avoiding the IPv4/IPv6 dual-stack ambiguity
+# that made diagnosing that collision harder.
+ExecStart=/usr/bin/google-chrome --remote-debugging-port=19222 --remote-debugging-address=127.0.0.1 --user-data-dir=/opt/xhs-worker/chrome-profile --remote-allow-origins=* --no-first-run --no-default-browser-check --window-size=1920,1080
 Restart=on-failure
 RestartSec=5
 

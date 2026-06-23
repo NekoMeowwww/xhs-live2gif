@@ -13,6 +13,8 @@
 5. **遇到登录墙/验证码/短信验证，停下来找人类处理，不要自己猜着点。** 自动化"处理验证码"这件事本身就是风控最想抓的行为模式。
 6. **任何 `git push --force`、删除 Chrome profile、重置 S3 bucket 之类不可逆操作，执行前必须先汇报打算做什么并等待确认。**
 7. **不要修改 `packages/worker/src/extract.ts` 里的提取 JS 或 `convert.ts` 里的 ffmpeg 滤镜图**，除非先用已知笔记（见下方"已知良好笔记"）验证过修改后的版本仍然能跑出一致结果。这段逻辑已经端到端验证过，不要凭直觉"优化"它。
+8. **worker 不依赖 `opencli` CLI，也不需要在 Tier A 服务器上装它。** 已经源码级确认：opencli 1.8.4 的 `browser` 子命令不支持 `OPENCLI_CDP_ENDPOINT`，强制走浏览器扩展桥接，而扩展在无 GUI 的 Linux 服务器上装不上。`packages/worker/src/cdp.ts` 直连 Chrome 的 CDP 端口（`chrome-remote-interface`），不经过 opencli。**如果你在 Tier A 上遇到任何"扩展未连接/disconnected"之类的报错，不要去修扩展——那是在解决一个我们已经绕开的问题，先检查 `XHS_CDP_ENDPOINT` 是不是指向了正确的端口、Chrome 是不是真的监听在那个端口上。**
+9. **Chrome 的调试端口固定用 19222，不要改回 9222。** 9222 是 Puppeteer/Playwright 等工具的通用默认端口，共享服务器上极易撞车（实际发生过：一个无关的、root 启动的 Playwright Chrome 占着 9222，导致我们自己的 `xhs-chrome` 被挤到 IPv6 地址上，引发一堆诡异的连接问题）。起 `xhs-chrome.service` 前先用 `ss -ltnp | grep 19222` 确认端口没被占用。
 
 ## 已知良好笔记（到处都会用到，记住它）
 
@@ -68,15 +70,22 @@ npm run build
 
 ### 阶段 3：起 Xvfb + Chrome（先不起 worker）
 
+先确认端口没被占用（硬性规则 9）：
+
+```bash
+ss -ltnp | grep 19222
+# 有输出就停下汇报，不要硬启——先弄清楚占着这个端口的是什么进程
+```
+
 ```bash
 sudo cp infra/systemd/xhs-xvfb.service infra/systemd/xhs-chrome.service /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl enable --now xhs-xvfb xhs-chrome
 sleep 3
-curl http://localhost:9222/json/version
+curl http://127.0.0.1:19222/json/version
 ```
 
-**判定**：`curl` 返回一段包含 `"Browser"` 字段的 JSON，不是连接拒绝。`systemctl status xhs-xvfb xhs-chrome` 都是 `active (running)`。
+**判定**：`curl` 返回一段包含 `"Browser"` 字段的 JSON，不是连接拒绝，且 `Browser` 字段是 `Chrome/...`（不是 `HeadlessChrome` 之类——那通常意味着连到了别的工具，不是我们自己的 `xhs-chrome`）。`systemctl status xhs-xvfb xhs-chrome` 都是 `active (running)`。
 
 **先不要装 `xhs-worker.service`**——这台 Chrome 的 profile 是空的，没有登录态，worker 跑起来也只会不断失败。下一步必须先建立登录态。
 
@@ -90,11 +99,8 @@ curl http://localhost:9222/json/version
    ```bash
    sudo -u xhsworker node /opt/xhs-worker/app/packages/worker/bootstrap/cookie-import.js xhs-cookies.json
    ```
-4. 验证：
-   ```bash
-   OPENCLI_CDP_ENDPOINT=http://localhost:9222 opencli browser verify-session eval "window.__INITIAL_STATE__.user"
-   ```
-   **判定**：返回的是这个新账号的用户信息对象，不是 `undefined`、不是登录墙的 HTML 痕迹。
+4. 验证：`cookie-import.js` 自己会打印一行 `Page probe after navigation: has-user-state`（或 `no-user-state`）——这就是判定依据，不需要再跑 `opencli browser` 之类的命令二次确认（opencli 在这个场景下不可用，见硬性规则 8）。
+   **判定**：输出是 `has-user-state`，不是 `no-user-state`。
 5. **判定通过后立刻**：`rm` 掉两台机器上的 `xhs-cookies.json`。这一步不可跳过，不要留着"以防万一"。
 
 **如果这一步反复失败**（页面始终是登录墙/验证码）：停下，按 `docs/runbook-relogin.md` 的 Plan B 走——临时起 VNC，**让人类**手动登录。不要自己尝试填验证码、猜短信验证码、或者重试很多次指望它过去（重试本身就是会被风控盯上的行为）。
@@ -106,14 +112,32 @@ sudo cp /opt/xhs-worker/app/infra/systemd/xhs-worker.service /etc/systemd/system
 sudo systemctl daemon-reload
 sudo systemctl enable --now xhs-worker
 sudo systemctl status xhs-worker
-
-OPENCLI_CDP_ENDPOINT=http://localhost:9222 opencli doctor
-OPENCLI_CDP_ENDPOINT=http://localhost:9222 \
-  bash /opt/xhs-worker/app/scripts/xhs-live2gif.sh "http://xhslink.com/o/2E5XOr9DlHP" /tmp/xhs-agent-verify
-ls /tmp/xhs-agent-verify/6a349af8000000000702c166/gif | wc -l
 ```
 
-**判定**：最后一行输出 `18`。不是 18 就停下排查，不要继续往下部署 Tier B——核心管线没跑通，接 API/前端只会放大问题。
+直接用 worker 自己编译出来的代码验证（不经过 opencli/bash 脚本，硬性规则 8）：
+
+```bash
+cd /opt/xhs-worker/app/packages/worker
+node -e "
+const { extractLivePhotos } = require('./dist/extract');
+const { downloadVideos } = require('./dist/download');
+const { convertAll } = require('./dist/convert');
+const fs = require('fs');
+const path = require('path');
+const tmp = '/tmp/xhs-agent-verify';
+fs.mkdirSync(path.join(tmp, 'mp4'), { recursive: true });
+fs.mkdirSync(path.join(tmp, 'gif'), { recursive: true });
+(async () => {
+  const { noteId, videoUrls } = await extractLivePhotos('http://xhslink.com/o/2E5XOr9DlHP');
+  console.log('noteId:', noteId, 'count:', videoUrls.length);
+  const mp4s = await downloadVideos(videoUrls, path.join(tmp, 'mp4'));
+  const gifs = await convertAll(mp4s, path.join(tmp, 'gif'));
+  console.log('gifs ok:', gifs.length);
+})().catch((e) => { console.error('FAILED:', e); process.exit(1); });
+"
+```
+
+**判定**：`noteId` 输出 `6a349af8000000000702c166`，`count` 和 `gifs ok` 都输出 `18`。不是 18 就停下排查，不要继续往下部署 Tier B——核心管线没跑通，接 API/前端只会放大问题。
 
 验证完清理：`rm -rf /tmp/xhs-agent-verify`。
 

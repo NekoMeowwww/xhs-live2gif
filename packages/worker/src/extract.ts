@@ -1,5 +1,5 @@
 import { isXiaohongshuHost, extractNoteId, isValidNoteId } from "@xhs/shared";
-import { createSession, browserOpen, browserEval, browserClose } from "./opencli";
+import { withPage } from "./cdp";
 
 export interface LivePhotoExtraction {
   noteId: string;
@@ -11,6 +11,9 @@ export interface LivePhotoExtraction {
 // is Xiaohongshu's own client-side state, populated by their (signed,
 // monthly-rotating) API calls. We never compute or replay that signing
 // ourselves; we just read what their own page already computed.
+//
+// Do not change this string without re-running the parity test against the
+// known-good note (see AGENTS.md hard rule 7) — it's proven end-to-end.
 function buildExtractionJs(noteId: string): string {
   return (
     `var n=window.__INITIAL_STATE__.note.noteDetailMap['${noteId}'].note;` +
@@ -20,17 +23,9 @@ function buildExtractionJs(noteId: string): string {
   );
 }
 
-function cleanEvalString(raw: string): string {
-  return raw.replace(/["\r\n]/g, "").trim();
-}
-
 export async function extractLivePhotos(url: string): Promise<LivePhotoExtraction> {
-  const session = createSession();
-  try {
-    await browserOpen(session, url);
-
-    const hrefRaw = await browserEval(session, "window.location.href");
-    const href = cleanEvalString(hrefRaw);
+  return withPage(url, async (evaluate) => {
+    const href = String(await evaluate("window.location.href"));
 
     // Re-validate after redirect: a malicious xhslink.com short link must not
     // be able to send the real, authenticated browser anywhere else.
@@ -45,11 +40,9 @@ export async function extractLivePhotos(url: string): Promise<LivePhotoExtractio
 
     // noteId is validated against /^[a-f0-9]{20,}$/ above before being
     // string-interpolated into the JS payload below.
-    const json = await browserEval(session, buildExtractionJs(noteId));
-    const videoUrls: string[] = JSON.parse(json.trim());
+    const json = await evaluate(buildExtractionJs(noteId));
+    const videoUrls: string[] = JSON.parse(String(json));
 
     return { noteId, videoUrls };
-  } finally {
-    await browserClose(session);
-  }
+  });
 }

@@ -6,7 +6,7 @@
 
 - `GET /api/health` 返回 `sessionOk: false`（worker 每 15 分钟自动跑的健康检查，见 `packages/worker/src/health.ts`）。
 - 收到 `XHS_ALERT_WEBHOOK_URL` 发出的告警消息。
-- worker 日志（`journalctl -u xhs-worker -f`）里 `opencli browser ... open` 之后解析不到 `noteId`，或对已知笔记 eval 不到 `noteDetailMap`。
+- worker 日志（`journalctl -u xhs-worker -f`）里导航之后解析不到 `noteId`，或对已知笔记 eval 不到 `noteDetailMap`（`packages/worker/src/extract.ts` 通过 `cdp.ts` 直连 Chrome 的 CDP，不经过 opencli——见 `docs/cdp-bootstrap.md` 开头说明）。
 - 4xx/超时在短时间内激增。
 
 ## 处理步骤
@@ -32,13 +32,18 @@
    kill %1 %2   # 或按实际 PID kill x11vnc / novnc_proxy
    ```
 
-5. **跑一次烟雾测试确认恢复**（同 `docs/cdp-bootstrap.md` 第 5 步）：
+5. **跑一次烟雾测试确认恢复**（同 `docs/cdp-bootstrap.md` 第 5 步，直接用编译好的 worker 代码，不经过 opencli）：
    ```bash
-   OPENCLI_CDP_ENDPOINT=http://localhost:9222 opencli doctor
-   OPENCLI_CDP_ENDPOINT=http://localhost:9222 \
-     bash /opt/xhs-worker/app/scripts/xhs-live2gif.sh "http://xhslink.com/o/2E5XOr9DlHP" /tmp/xhs-test
+   curl http://127.0.0.1:19222/json/version
+   cd /opt/xhs-worker/app/packages/worker
+   node -e "
+   const { extractLivePhotos } = require('./dist/extract');
+   extractLivePhotos('http://xhslink.com/o/2E5XOr9DlHP')
+     .then((r) => console.log('noteId:', r.noteId, 'count:', r.videoUrls.length))
+     .catch((e) => { console.error('FAILED:', e); process.exit(1); });
+   "
    ```
-   确认 18 张实况图都能正常提取转换。
+   确认 `noteId` 对得上、`count` 是 18。
 
 6. **立刻备份新的 profile**（不要等夜间 cron）：
    ```bash

@@ -8,7 +8,7 @@
 
 不直接拼小红书的接口请求，是因为他们的反爬（TLS 指纹、签名参数月度轮换、设备/账号指纹关联）专门对付"伪装成浏览器的脚本"——而我们用的是货真价实的浏览器，指纹和签名都是小红书自己的前端 JS 算出来的，不用逆向、也不容易因为签名轮换而失效。
 
-浏览器自动化部分用 [OpenCLI](https://opencli.info)：本地开发用它的浏览器扩展桥接（复用桌面 Chrome 的登录态），生产环境用它的 CDP 直连模式（复用一个跑在 Linux 服务器上的真实 Chrome，同样的登录态持久化逻辑）——**两边不需要任何 Windows 服务器**。
+浏览器自动化分两条路：`scripts/xhs-live2gif.sh`（手动/调试用）走 [OpenCLI](https://opencli.info) 的浏览器扩展桥接，复用桌面 Chrome 的登录态；`packages/worker` 这条生产路径**不用 opencli**——`packages/worker/src/cdp.ts` 直接用 `chrome-remote-interface` 连 Chrome 的 CDP 端口。这是踩坑之后确认的：opencli 1.8.4 的 `browser` 子命令不支持 CDP 直连（只在它的 Electron 分支生效），强制要求浏览器扩展，而扩展在无 GUI 的 Linux 服务器上装不上。直连 CDP 之后，本地开发和生产用的是**同一套代码路径**，都需要一个开了调试端口、已登录小红书的 Chrome（登录态怎么建立见 `docs/cdp-bootstrap.md`）——**两边都不需要任何 Windows 服务器**。
 
 ## 仓库结构
 
@@ -38,15 +38,18 @@ bash scripts/xhs-live2gif.sh "<小红书笔记链接或短链>"
 
 ## 本地开发（Web 服务）
 
-需要：Node.js 20+、Redis、`opencli`、`ffmpeg`、`curl`，以及一个已登录小红书的 Chrome session。
+需要：Node.js 20+、Redis、`ffmpeg`、`curl`，以及一个**开了 CDP 调试端口、已登录小红书**的 Chrome（不是你日常用的那个 Chrome——Chrome 不允许对默认 profile 目录开调试端口，必须是单独的 profile，登录态怎么建立见 `docs/cdp-bootstrap.md` 第 4 步）：
 
 ```bash
+google-chrome --remote-debugging-port=19222 --remote-debugging-address=127.0.0.1 \
+  --user-data-dir=/path/to/a/fresh/profile --no-first-run --no-default-browser-check &
+
 npm install
 npm run build
 
 # 三个进程分开起：
 redis-server
-node packages/worker/dist/index.js     # 需要先配好下面这些环境变量
+XHS_CDP_ENDPOINT=http://127.0.0.1:19222 node packages/worker/dist/index.js   # 还需要配好下面这些环境变量
 node packages/api/dist/index.js
 # 前端是纯静态文件，直接用任意静态服务器开 packages/frontend/ 即可，
 # 或者参考 infra/docker-compose.api.yml 用 nginx 起
@@ -60,7 +63,7 @@ worker 和 API 需要的环境变量分别见 [`infra/worker.env.example`](infra
 |---|---|
 | `XHS_REDIS_URL` | BullMQ 队列 + 限流共享存储 |
 | `XHS_S3_*` | 结果文件（GIF/zip）的对象存储，S3 兼容 |
-| `OPENCLI_CDP_ENDPOINT` | 生产环境下 Chrome 的 CDP 地址（本机开发不用设，走扩展桥接） |
+| `XHS_CDP_ENDPOINT` | Chrome 的 CDP 地址，默认 `http://127.0.0.1:19222`（端口故意不用 9222，见下方风险说明） |
 | `XHS_ALERT_WEBHOOK_URL` | session 掉线时的告警 webhook |
 
 ## 部署到生产（Linux，不需要 Windows）
@@ -75,6 +78,7 @@ worker 和 API 需要的环境变量分别见 [`infra/worker.env.example`](infra
 ## 安全 / 风险
 
 - `packages/shared/src/validation.ts` 是唯一的输入边界：只接受 `xiaohongshu.com` 笔记链接和 `xhslink.com` 短链，其他一律拒绝——没有这层，"把任意链接丢进已登录浏览器"就是一个开放 SSRF。
-- 所有子进程调用（`curl`/`ffmpeg`/`opencli`）都用数组参数 + `execFile`，不拼 shell 字符串。
+- 所有子进程调用（`curl`/`ffmpeg`）都用数组参数 + `execFile`，不拼 shell 字符串。
 - 单账号背后只有一个 Chrome session，worker 并发数锁定为 1——扩容靠加"账号+Chrome+worker"整套副本，不是调高并发数。
+- Chrome 的 CDP 端口固定用 19222、绑定 `127.0.0.1`，不要用默认的 9222——那是 Puppeteer/Playwright 等工具的通用默认端口，共享服务器上实测发生过撞车（被一个无关的 root 进程占着）。
 - 这类自动化只读访问本质上仍处于平台 ToS 的灰色地带；建账号、限流、监控告警等缓解措施见 [`docs/runbook-relogin.md`](docs/runbook-relogin.md)，但风险不能降到零，公开推广前请知情承担。

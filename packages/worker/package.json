@@ -21,6 +21,7 @@
     "typescript": "^5.7.0",
     "ts-node": "^10.9.2",
     "@types/node": "^22.10.0",
-    "@types/archiver": "^6.0.3"
+    "@types/archiver": "^6.0.3",
+    "@types/chrome-remote-interface": "^0.34.0"
   }
 }

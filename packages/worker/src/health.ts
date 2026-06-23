@@ -1,6 +1,6 @@
 import { HealthStatus } from "@xhs/shared";
 import { extractLivePhotos } from "./extract";
-import { doctor } from "./opencli";
+import { isCdpReachable } from "./cdp";
 
 // The same note we've proven end-to-end (18 live photos). Used as a smoke
 // test: if this stops resolving correctly, the logged-in session has expired
@@ -11,10 +11,8 @@ const KNOWN_GOOD_NOTE_ID = process.env.XHS_HEALTHCHECK_NOTE_ID ?? "6a349af800000
 export async function checkSessionHealth(): Promise<HealthStatus> {
   const now = new Date().toISOString();
 
-  try {
-    await doctor();
-  } catch (err) {
-    return { sessionOk: false, lastChecked: now, detail: `opencli doctor failed: ${String(err)}` };
+  if (!(await isCdpReachable())) {
+    return { sessionOk: false, lastChecked: now, detail: "Chrome CDP endpoint unreachable (XHS_CDP_ENDPOINT)" };
   }
 
   try {
