@@ -123,7 +123,11 @@ async function pollJob(jobId) {
     const data = await res.json();
 
     if (data.status === "queued") {
-      setStatus("排队中...");
+      setStatus(
+        data.queuePosition
+          ? `排队中...（第 ${data.queuePosition} 位，共 ${data.queueTotal} 个任务）`
+          : "排队中...",
+      );
       setProgress(data.progress);
     } else if (data.status === "processing") {
       setStatus("");

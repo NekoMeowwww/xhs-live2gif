@@ -19,7 +19,8 @@ export async function enqueueJob(payload: JobPayload): Promise<void> {
 }
 
 export type JobStatusResponse =
-  | { status: "queued" | "processing"; progress?: JobProgress }
+  | { status: "queued"; progress?: JobProgress; queuePosition?: number; queueTotal?: number }
+  | { status: "processing"; progress?: JobProgress }
   | { status: "done" | "failed"; result: JobResult };
 
 export async function getJobStatus(jobId: string): Promise<JobStatusResponse | null> {
@@ -44,7 +45,18 @@ export async function getJobStatus(jobId: string): Promise<JobStatusResponse | n
   if (state === "active") {
     return { status: "processing", progress };
   }
-  return { status: "queued", progress };
+
+  // FIFO position among still-waiting jobs — cheap at this scale, since the
+  // 1/minute submission rate limit (src/index.ts) keeps this list short.
+  // jobId can be momentarily absent from the snapshot if the job transitions
+  // to active between the getState() call above and this one; just omit the
+  // position fields in that case rather than guessing.
+  const waiting = await extractQueue.getWaiting();
+  const position = waiting.findIndex((j) => j.id === jobId);
+  if (position === -1) {
+    return { status: "queued", progress };
+  }
+  return { status: "queued", progress, queuePosition: position + 1, queueTotal: waiting.length };
 }
 
 function isJobProgress(value: unknown): value is JobProgress {
