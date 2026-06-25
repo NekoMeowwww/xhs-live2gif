@@ -4,7 +4,7 @@ import * as path from "node:path";
 import { S3Client, PutObjectCommand, GetObjectCommand } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import archiver from "archiver";
-import { isValidNoteId, GifResult } from "@xhs/shared";
+import { isValidNoteId, MediaResult } from "@xhs/shared";
 
 const BUCKET = process.env.XHS_S3_BUCKET ?? "";
 // Long enough for a user to click through after the job finishes, short
@@ -38,7 +38,7 @@ async function uploadAndSign(
   });
 }
 
-function buildZip(gifPaths: string[], jobId: string): Promise<string> {
+function buildZip(filePaths: string[], jobId: string): Promise<string> {
   return new Promise((resolve, reject) => {
     const zipPath = path.join(os.tmpdir(), `${jobId}.zip`);
     const output = fs.createWriteStream(zipPath);
@@ -46,8 +46,8 @@ function buildZip(gifPaths: string[], jobId: string): Promise<string> {
     output.on("close", () => resolve(zipPath));
     archive.on("error", reject);
     archive.pipe(output);
-    for (const gifPath of gifPaths) {
-      archive.file(gifPath, { name: path.basename(gifPath) });
+    for (const filePath of filePaths) {
+      archive.file(filePath, { name: path.basename(filePath) });
     }
     void archive.finalize();
   });
@@ -56,8 +56,9 @@ function buildZip(gifPaths: string[], jobId: string): Promise<string> {
 export async function uploadResults(
   noteId: string,
   jobId: string,
-  gifPaths: string[],
-): Promise<{ gifs: GifResult[]; zipUrl: string }> {
+  filePaths: string[],
+  contentType: string,
+): Promise<{ files: MediaResult[]; zipUrl?: string }> {
   if (!isValidNoteId(noteId)) {
     // noteId is interpolated into the object storage key below — never trust
     // it there without this check, even though extract.ts already validates it.
@@ -66,18 +67,24 @@ export async function uploadResults(
 
   const s3 = getS3Client();
   const prefix = `xhs-gifs/${noteId}/${jobId}`;
-  const gifs: GifResult[] = [];
+  const files: MediaResult[] = [];
 
-  for (const gifPath of gifPaths) {
-    const name = path.basename(gifPath);
-    const url = await uploadAndSign(s3, gifPath, `${prefix}/${name}`, "image/gif");
-    gifs.push({ name, url });
+  for (const filePath of filePaths) {
+    const name = path.basename(filePath);
+    const url = await uploadAndSign(s3, filePath, `${prefix}/${name}`, contentType);
+    files.push({ name, url });
   }
 
-  const zipPath = await buildZip(gifPaths, jobId);
+  // A single file has nothing to bundle — skip the zip rather than wrapping
+  // one (often large, for mp4) file in another file for no benefit.
+  if (filePaths.length <= 1) {
+    return { files };
+  }
+
+  const zipPath = await buildZip(filePaths, jobId);
   try {
     const zipUrl = await uploadAndSign(s3, zipPath, `${prefix}/all.zip`, "application/zip");
-    return { gifs, zipUrl };
+    return { files, zipUrl };
   } finally {
     fs.rmSync(zipPath, { force: true });
   }

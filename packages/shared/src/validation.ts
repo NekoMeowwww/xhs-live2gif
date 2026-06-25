@@ -44,3 +44,7 @@ const NOTE_ID_PATTERN = /^[a-f0-9]{20,}$/;
 export function isValidNoteId(id: string): boolean {
   return NOTE_ID_PATTERN.test(id);
 }
+
+export function isValidOutputFormat(value: unknown): value is "gif" | "mp4" {
+  return value === "gif" || value === "mp4";
+}

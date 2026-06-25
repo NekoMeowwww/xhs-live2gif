@@ -6,6 +6,7 @@ const POLL_TIMEOUT_MS = 90_000;
 
 const form = document.getElementById("job-form");
 const input = document.getElementById("url-input");
+const formatFieldset = document.getElementById("format-fieldset");
 const submitBtn = document.getElementById("submit-btn");
 const statusLine = document.getElementById("status-line");
 const progressWrap = document.getElementById("progress-wrap");
@@ -41,6 +42,10 @@ const STAGE_LABELS = {
   uploading: "上传结果",
 };
 
+function getSelectedFormat() {
+  return formatFieldset.querySelector('input[name="format"]:checked')?.value ?? "gif";
+}
+
 function setProgress(progress) {
   if (!progress) {
     progressWrap.hidden = true;
@@ -70,10 +75,13 @@ function resetResult() {
 function renderResult(result) {
   resultSection.hidden = false;
 
+  const files = result.files ?? [];
+  const isVideo = files.some((file) => file.name.endsWith(".mp4"));
+
   if (result.message) {
     resultMessage.textContent = result.message;
   } else {
-    resultMessage.textContent = `共生成 ${result.gifs?.length ?? 0} 个 GIF`;
+    resultMessage.textContent = `共生成 ${files.length} 个${isVideo ? " MP4" : " GIF"}`;
   }
 
   if (result.zipUrl) {
@@ -81,19 +89,24 @@ function renderResult(result) {
     zipLink.hidden = false;
   }
 
-  for (const gif of result.gifs ?? []) {
+  for (const file of files) {
     const figure = document.createElement("figure");
-    const img = document.createElement("img");
-    img.src = gif.url;
-    img.alt = gif.name;
-    img.loading = "lazy";
+    const media = document.createElement(isVideo ? "video" : "img");
+    media.src = file.url;
+    if (isVideo) {
+      media.controls = true;
+      media.preload = "metadata";
+    } else {
+      media.alt = file.name;
+      media.loading = "lazy";
+    }
     const caption = document.createElement("figcaption");
     const link = document.createElement("a");
-    link.href = gif.url;
+    link.href = file.url;
     link.textContent = "下载";
-    link.download = gif.name;
+    link.download = file.name;
     caption.appendChild(link);
-    figure.append(img, caption);
+    figure.append(media, caption);
     gifGrid.appendChild(figure);
   }
 }
@@ -153,7 +166,7 @@ form.addEventListener("submit", async (event) => {
     const res = await fetch(`${API_BASE}/jobs`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ url }),
+      body: JSON.stringify({ url, format: getSelectedFormat() }),
     });
 
     if (res.status === 429) {

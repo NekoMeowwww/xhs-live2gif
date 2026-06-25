@@ -1,13 +1,16 @@
 export type JobStatus = "queued" | "processing" | "done" | "failed";
 
+export type OutputFormat = "gif" | "mp4";
+
 export interface JobPayload {
   jobId: string;
   url: string;
+  format: OutputFormat;
   clientIp: string;
   submittedAt: string;
 }
 
-export interface GifResult {
+export interface MediaResult {
   name: string;
   url: string;
 }
@@ -15,7 +18,7 @@ export interface GifResult {
 export interface JobResult {
   status: JobStatus;
   noteId?: string;
-  gifs?: GifResult[];
+  files?: MediaResult[];
   zipUrl?: string;
   message?: string;
   error?: string;

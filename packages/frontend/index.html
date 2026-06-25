@@ -22,6 +22,11 @@
       <button id="submit-btn" type="submit">开始转换</button>
     </form>
 
+    <fieldset id="format-fieldset" class="format-fieldset">
+      <label><input type="radio" name="format" value="gif" checked /> GIF（转码，画质/帧率会被压缩）</label>
+      <label><input type="radio" name="format" value="mp4" /> MP4（原始实况视频，无转码，画质更高更快）</label>
+    </fieldset>
+
     <div id="progress-wrap" class="progress-wrap" hidden>
       <progress id="progress-bar" max="100" value="0"></progress>
       <span id="progress-label" class="progress-label"></span>

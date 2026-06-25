@@ -1,10 +1,11 @@
 import { randomUUID } from "node:crypto";
 import { FastifyInstance } from "fastify";
-import { isAllowedInputUrl } from "@xhs/shared";
+import { isAllowedInputUrl, isValidOutputFormat, OutputFormat } from "@xhs/shared";
 import { enqueueJob, getJobStatus } from "../queue";
 
 interface CreateJobBody {
   url?: string;
+  format?: OutputFormat;
 }
 
 export async function registerJobRoutes(app: FastifyInstance): Promise<void> {
@@ -21,10 +22,18 @@ export async function registerJobRoutes(app: FastifyInstance): Promise<void> {
       });
     }
 
+    // Default to "gif" so callers that predate the format option keep working
+    // unchanged.
+    const format = request.body?.format ?? "gif";
+    if (!isValidOutputFormat(format)) {
+      return reply.code(400).send({ error: 'format must be "gif" or "mp4".' });
+    }
+
     const jobId = randomUUID();
     await enqueueJob({
       jobId,
       url,
+      format,
       clientIp: request.ip,
       submittedAt: new Date().toISOString(),
     });

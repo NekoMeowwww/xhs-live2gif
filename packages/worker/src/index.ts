@@ -44,7 +44,8 @@ async function sendAlert(message: string): Promise<void> {
 // consuming this same queue, never by raising this number.
 const extractWorker = new Worker<JobPayload, JobResult>(
   QUEUE_NAME,
-  async (job) => processJob(job.data.jobId, job.data.url, (progress) => job.updateProgress(progress)),
+  async (job) =>
+    processJob(job.data.jobId, job.data.url, job.data.format, (progress) => job.updateProgress(progress)),
   {
     connection,
     concurrency: 1,
