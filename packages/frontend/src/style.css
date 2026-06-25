@@ -146,3 +146,10 @@ h1 {
   font-size: 0.8rem;
   color: #555;
 }
+
+.feedback-footer {
+  margin-top: 40px;
+  text-align: center;
+  font-size: 0.8rem;
+  color: #999;
+}
