@@ -133,10 +133,13 @@ h1 {
   text-align: center;
 }
 
-.gif-grid img {
+.gif-grid img,
+.gif-grid video {
+  display: block;
   width: 100%;
   border-radius: 6px;
   border: 1px solid #eee;
+  background: #000;
 }
 
 .gif-grid figcaption a {
