@@ -2,7 +2,7 @@
 # 把小红书笔记里的实况图片(Live Photo)转成 GIF
 # 依赖: opencli (https://www.npmjs.com/package/@jackwener/opencli，需已登录小红书), ffmpeg, curl, node
 # 用法: xhs-live2gif.sh <小红书笔记链接或短链> [输出目录，默认 ~/xhs-live-gifs]
-set -uo pipefail
+set -euo pipefail
 
 if [ "${1:-}" = "-h" ] || [ "${1:-}" = "--help" ] || [ -z "${1:-}" ]; then
   echo "用法: xhs-live2gif.sh <小红书笔记链接或短链> [输出目录]"
@@ -27,10 +27,13 @@ cleanup() {
 trap cleanup EXIT
 
 echo "[1/5] 打开链接..." >&2
-opencli browser "$SESSION" open "$URL" >/dev/null 2>&1
+if ! opencli browser "$SESSION" open "$URL" >/dev/null; then
+  echo "✗ 打开笔记失败，请检查 OpenCLI 浏览器连接和链接。" >&2
+  exit 1
+fi
 
-HREF=$(opencli browser "$SESSION" eval "window.location.href" 2>/dev/null | tr -d '"\r\n')
-NOTE_ID=$(echo "$HREF" | grep -oE '(explore|discovery/item)/[a-f0-9]+' | grep -oE '[a-f0-9]{20,}$')
+HREF=$(opencli browser "$SESSION" eval "window.location.href" | tr -d '"\r\n')
+NOTE_ID=$(printf '%s' "$HREF" | grep -oE '(explore|discovery/item)/[a-f0-9]+' | grep -oE '[a-f0-9]{20,}$' || true)
 
 if [ -z "$NOTE_ID" ]; then
   echo "✗ 无法解析笔记 ID，链接可能无效，或小红书未登录/笔记已被删除。" >&2
@@ -40,15 +43,29 @@ fi
 
 echo "[2/5] 笔记 ID: $NOTE_ID，提取实况视频地址..." >&2
 
-JS="var n=window.__INITIAL_STATE__.note.noteDetailMap['$NOTE_ID'].note;JSON.stringify(n.imageList.filter(function(img){return img.livePhoto;}).map(function(img){var h264=(img.stream&&img.stream.h264)||[];return h264.length?h264[0].masterUrl:null;}).filter(Boolean))"
+JS="(function(){var detail=window.__INITIAL_STATE__?.note?.noteDetailMap?.['$NOTE_ID'];var n=detail?.note;if(!n||!Array.isArray(n.imageList))throw new Error('笔记数据尚未加载');var live=n.imageList.filter(function(img){return img.livePhoto;});var urls=live.map(function(img){var streams=img.stream||{};var keys=['h264','h265','av1'].concat(Object.keys(streams));for(var key of keys){var variants=streams[key];if(!Array.isArray(variants))continue;for(var item of variants){if(!item)continue;var url=item.masterUrl||item.master_url||(item.backupUrls&&item.backupUrls[0]);if(typeof url==='string'&&/^https?:/.test(url))return url;}}return null;}).filter(Boolean);return JSON.stringify({liveCount:live.length,urls:urls});})()"
 
-URLS_JSON=$(opencli browser "$SESSION" eval "$JS" 2>/dev/null)
+if ! RESULT_JSON=$(opencli browser "$SESSION" eval "$JS"); then
+  echo "✗ 读取笔记数据失败。请在 Chrome 中确认笔记可打开，然后重试。" >&2
+  exit 1
+fi
 
-COUNT=$(echo "$URLS_JSON" | node -e "process.stdout.write(String(JSON.parse(require('fs').readFileSync(0,'utf8')).length))" 2>/dev/null || echo 0)
+if ! STATS=$(printf '%s' "$RESULT_JSON" | node -e 'const x=JSON.parse(require("fs").readFileSync(0,"utf8"));if(!Number.isInteger(x.liveCount)||!Array.isArray(x.urls))process.exit(1);process.stdout.write(x.liveCount+" "+x.urls.length)' 2>/dev/null); then
+  echo "✗ 浏览器返回的数据无法解析。" >&2
+  exit 1
+fi
+read -r LIVE_COUNT COUNT <<< "$STATS"
 
-if [ "$COUNT" = "0" ] || [ -z "$COUNT" ]; then
-  echo "该笔记没有实况图片（livePhoto），无需转换。" >&2
+if [ "$LIVE_COUNT" = "0" ]; then
+  echo "该笔记没有实况图片（livePhoto）。" >&2
   exit 0
+fi
+if [ "$COUNT" = "0" ]; then
+  echo "✗ 找到 $LIVE_COUNT 张实况图片，但未找到可下载的视频流。" >&2
+  exit 1
+fi
+if [ "$COUNT" -ne "$LIVE_COUNT" ]; then
+  echo "注意：$LIVE_COUNT 张实况图片中，仅 $COUNT 张找到了视频流。" >&2
 fi
 
 echo "[3/5] 发现 $COUNT 张实况图片，下载视频..." >&2
@@ -56,12 +73,12 @@ echo "[3/5] 发现 $COUNT 张实况图片，下载视频..." >&2
 NOTE_DIR="$OUTDIR/$NOTE_ID"
 mkdir -p "$NOTE_DIR/mp4" "$NOTE_DIR/gif"
 
-echo "$URLS_JSON" | node -e "JSON.parse(require('fs').readFileSync(0,'utf8')).forEach(u=>console.log(u))" > "$NOTE_DIR/.live_urls.txt"
+printf '%s' "$RESULT_JSON" | node -e 'JSON.parse(require("fs").readFileSync(0,"utf8")).urls.forEach(u=>console.log(u))' > "$NOTE_DIR/.live_urls.txt"
 
 i=1
 while IFS= read -r vurl; do
   idx=$(printf "%02d" "$i")
-  curl -s -o "$NOTE_DIR/mp4/live_${idx}.mp4" "$vurl"
+  curl -fLsS --retry 2 -o "$NOTE_DIR/mp4/live_${idx}.mp4" "$vurl"
   i=$((i+1))
 done < "$NOTE_DIR/.live_urls.txt"
 
